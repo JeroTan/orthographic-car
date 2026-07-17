@@ -1,3 +1,5 @@
+import { createRoadSurfaceQuery } from './road-surface';
+
 export const WORLD_GRID_SIZE = 18;
 export const WORLD_TILE_SIZE = 8;
 export const WORLD_SPAN = WORLD_GRID_SIZE * WORLD_TILE_SIZE;
@@ -136,12 +138,8 @@ export function generateWorld(seed: number): WorldLayout {
 }
 
 export function createRoadIndex(layout: WorldLayout): RoadIndex {
-	const roadTiles = new Set(layout.roads.map((road) => tileId(road.x, road.z)));
-	const hasWorldPosition = (x: number, z: number) => {
-		const tileX = Math.floor((x + layout.worldSpan / 2) / layout.tileSize);
-		const tileZ = Math.floor((z + layout.worldSpan / 2) / layout.tileSize);
-		return roadTiles.has(tileId(tileX, tileZ));
-	};
+	const roadSurface = createRoadSurfaceQuery(layout);
+	const hasWorldPosition = (x: number, z: number) => roadSurface.containsPoint(x, z);
 
 	return {
 		hasWorldPosition,

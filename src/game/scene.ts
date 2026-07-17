@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 
+import { buildRoadSurface } from './road-surface';
 import { createVehicleController, type VehicleInput } from './vehicle';
 import { addVehicleView } from './vehicle-view';
 import {
@@ -120,7 +121,7 @@ function repeatedProps(layout: WorldLayout, kind: PropKind): Array<PropPlacement
 
 function addWorld(scene: THREE.Scene, layout: WorldLayout): void {
 	const groundTexture = makeNoiseTexture([111, 148, 91], 26, layout.gridSize * 3);
-	const roadTexture = makeNoiseTexture([145, 132, 112], 28, 1);
+	const roadTexture = makeNoiseTexture([72, 76, 78], 18, 1);
 	const groundMaterial = new THREE.MeshLambertMaterial({ map: groundTexture, color: 0xc3d9a5 });
 	const ground = new THREE.Mesh(
 		new THREE.PlaneGeometry(layout.worldSpan * 3, layout.worldSpan * 3),
@@ -130,21 +131,24 @@ function addWorld(scene: THREE.Scene, layout: WorldLayout): void {
 	ground.position.y = -0.08;
 	scene.add(ground);
 
-	const roadTransforms: THREE.Matrix4[] = [];
-	const shoulderTransforms: THREE.Matrix4[] = [];
+	const repeatedRoadTransforms: THREE.Matrix4[] = [];
 	const postTransforms: THREE.Matrix4[] = [];
 	const capTransforms: THREE.Matrix4[] = [];
 	const roadsidePosts = getRoadsidePosts(layout);
 
 	for (const mapX of MAP_OFFSETS) {
 		for (const mapZ of MAP_OFFSETS) {
-			for (const road of layout.roads) {
-				const x = (road.x + 0.5) * layout.tileSize - layout.worldSpan / 2 + mapX * layout.worldSpan;
-				const z = (road.z + 0.5) * layout.tileSize - layout.worldSpan / 2 + mapZ * layout.worldSpan;
-				shoulderTransforms.push(matrixAt(x, 0, z, 0, layout.tileSize * 1.03, 0.08, layout.tileSize * 1.03));
-				roadTransforms.push(matrixAt(x, 0.08, z, 0, layout.tileSize * 0.94, 0.11, layout.tileSize * 0.94));
-
-			}
+			repeatedRoadTransforms.push(
+				matrixAt(
+					mapX * layout.worldSpan,
+					0.025,
+					mapZ * layout.worldSpan,
+					0,
+					1,
+					1,
+					1,
+				),
+			);
 
 			for (const post of roadsidePosts) {
 				const x = post.x + mapX * layout.worldSpan;
@@ -155,17 +159,17 @@ function addWorld(scene: THREE.Scene, layout: WorldLayout): void {
 		}
 	}
 
+	const roadSurface = buildRoadSurface(layout);
+	const roadGeometry = new THREE.BufferGeometry();
+	roadGeometry.setAttribute('position', new THREE.BufferAttribute(roadSurface.positions, 3));
+	roadGeometry.setAttribute('uv', new THREE.BufferAttribute(roadSurface.uvs, 2));
+	roadGeometry.setIndex(roadSurface.indices);
+	roadGeometry.computeVertexNormals();
 	addInstancedMesh(
 		scene,
-		new THREE.BoxGeometry(1, 1, 1),
-		new THREE.MeshLambertMaterial({ color: 0x8d744e }),
-		shoulderTransforms,
-	);
-	addInstancedMesh(
-		scene,
-		new THREE.BoxGeometry(1, 1, 1),
-		new THREE.MeshLambertMaterial({ color: 0xe0d2b7, map: roadTexture }),
-		roadTransforms,
+		roadGeometry,
+		new THREE.MeshLambertMaterial({ color: 0xd7dadd, map: roadTexture }),
+		repeatedRoadTransforms,
 	);
 	addInstancedMesh(
 		scene,

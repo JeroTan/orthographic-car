@@ -217,6 +217,43 @@ describe('vehicle controller', () => {
 		);
 	});
 
+	it('slows with a modest skid when braking hard through a turn', () => {
+		const vehicle = createVehicleController({ worldSpan: 144 });
+		const handbraking = createVehicleController({ worldSpan: 144 });
+		const accelerate = { accelerate: true, brake: false, left: false, right: false };
+
+		for (let frame = 0; frame < 30; frame += 1) {
+			vehicle.step(0.05, accelerate);
+			handbraking.step(0.05, accelerate);
+		}
+		const speedBeforeBraking = vehicle.state.speed;
+		let peakBrakingGroundSpeed = 0;
+		for (let frame = 0; frame < 6; frame += 1) {
+			const previousX = vehicle.state.x;
+			const previousZ = vehicle.state.z;
+			vehicle.step(0.05, { accelerate: false, brake: true, left: false, right: true });
+			peakBrakingGroundSpeed = Math.max(
+				peakBrakingGroundSpeed,
+				Math.hypot(vehicle.state.x - previousX, vehicle.state.z - previousZ) / 0.05,
+			);
+			handbraking.step(0.05, {
+				accelerate: false,
+				brake: false,
+				left: false,
+				right: true,
+				handbrake: true,
+			});
+		}
+
+		expect(vehicle.state.speed).toBeLessThan(speedBeforeBraking);
+		expect(peakBrakingGroundSpeed).toBeLessThan(speedBeforeBraking);
+		expect(Math.abs(vehicle.state.slipAngle)).toBeGreaterThan(0.08);
+		expect(Math.abs(vehicle.state.slipAngle)).toBeLessThan(0.2);
+		expect(Math.abs(handbraking.state.slipAngle)).toBeGreaterThan(
+			Math.abs(vehicle.state.slipAngle) + 0.05,
+		);
+	});
+
 	it('reports opposite chassis loads for acceleration and braking', () => {
 		const vehicle = createVehicleController({ worldSpan: 144 });
 

@@ -56,6 +56,7 @@ const TURNING_DRAG = 4;
 const HANDBRAKE_DRAG = 6;
 const HANDBRAKE_YAW_BOOST = 1.65;
 const ROAD_GRIP = 10;
+const BRAKING_REAR_GRIP = 4.5;
 const HANDBRAKE_REAR_GRIP = 1.2;
 const CAR_COLLISION_RADIUS = 1.25;
 const CAR_COLLISION_OFFSET = 1.1;
@@ -233,7 +234,12 @@ export function createVehicleController(config: VehicleConfig): VehicleControlle
 					: 0;
 			const lateralVelocity = velocityX * rightX + velocityZ * rightZ;
 			const poweredRearGrip = ROAD_GRIP * (1 - launchSlip * 0.45);
-			const grip = input.handbrake ? HANDBRAKE_REAR_GRIP : poweredRearGrip;
+			const hardBraking = input.brake && !input.accelerate && previousSpeed > 8;
+			const grip = input.handbrake
+				? HANDBRAKE_REAR_GRIP
+				: hardBraking
+					? BRAKING_REAR_GRIP
+					: poweredRearGrip;
 			const retainedLateralVelocity = lateralVelocity * Math.max(0, 1 - grip * deltaSeconds);
 			velocityX = forwardX * state.speed + rightX * retainedLateralVelocity;
 			velocityZ = forwardZ * state.speed + rightZ * retainedLateralVelocity;
