@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 
+import { addBuildingView } from './building-view';
 import { addGrassView } from './grass-view';
 import { buildRoadSurface } from './road-surface';
 import { createVehicleController, type VehicleInput } from './vehicle';
@@ -309,6 +310,7 @@ export function createGameScene(container: HTMLElement, options: GameSceneOption
 	scene.add(sun);
 
 	addWorld(scene, layout, () => startLoop());
+	const buildingView = addBuildingView(scene, layout, () => startLoop());
 	const grassView = addGrassView(scene, layout, () => startLoop());
 	const vehicleView = addVehicleView(
 		scene,
@@ -349,6 +351,7 @@ export function createGameScene(container: HTMLElement, options: GameSceneOption
 		controller.step(delta, input);
 		const { state } = controller;
 		const effectsActive = vehicleView.update(delta, state);
+		buildingView.update(state);
 		grassView.update(now / 1000, state);
 
 		camera.position.set(state.x + CAMERA_OFFSET, CAMERA_HEIGHT, state.z - CAMERA_OFFSET);
@@ -400,6 +403,7 @@ export function createGameScene(container: HTMLElement, options: GameSceneOption
 			destroyed = true;
 			stopLoop();
 			vehicleView.destroy();
+			buildingView.destroy();
 			grassView.destroy();
 			document.removeEventListener('visibilitychange', handleVisibilityChange);
 			resizeObserver.disconnect();

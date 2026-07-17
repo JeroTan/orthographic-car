@@ -29,6 +29,12 @@ export interface GrassPlacement extends TransformPlacement {
 	kind: GrassKind;
 }
 
+export type BuildingVariant = 0 | 1 | 2 | 3 | 4 | 5;
+
+export interface BuildingPlacement extends TransformPlacement {
+	variant: BuildingVariant;
+}
+
 export interface RoadLayout {
 	gridSize: number;
 	tileSize: number;
@@ -39,6 +45,7 @@ export interface RoadLayout {
 export interface WorldLayout extends RoadLayout {
 	props: PropPlacement[];
 	grass: GrassPlacement[];
+	buildings: BuildingPlacement[];
 }
 
 export interface TerrainIndex {
@@ -152,6 +159,17 @@ function grassPatchRadius(kind: GrassKind, scale: number): number {
 	return (kind === 'field' ? 1.4 : 0.9) * scale;
 }
 
+function wrappedPointDistance(
+	first: WorldPoint,
+	second: WorldPoint,
+	worldSpan: number,
+): number {
+	return Math.hypot(
+		wrappedDistance(first.x, second.x, worldSpan),
+		wrappedDistance(first.z, second.z, worldSpan),
+	);
+}
+
 export function generateWorld(seed: number): WorldLayout {
 	const random = createRandom(seed);
 	const roadRandom = createRandom(seed ^ 0x9e3779b9);
@@ -171,6 +189,59 @@ export function generateWorld(seed: number): WorldLayout {
 	const roads = [...roadTiles].map((id) => {
 		return { x: id % WORLD_GRID_SIZE, z: Math.floor(id / WORLD_GRID_SIZE) };
 	});
+	const buildingRandom = createRandom(seed ^ 0x51ed270b);
+	const buildingSpacing = [10, 14, 18][Math.floor(buildingRandom() * 3)];
+	const variantOffset = Math.floor(buildingRandom() * 6);
+	const buildings: BuildingPlacement[] = [];
+	const buildingCandidates: Array<BuildingPlacement & { roll: number }> = [];
+	const neighborDirections = [
+		{ x: 1, z: 0 },
+		{ x: -1, z: 0 },
+		{ x: 0, z: 1 },
+		{ x: 0, z: -1 },
+	] as const;
+	for (let z = 0; z < WORLD_GRID_SIZE; z += 1) {
+		for (let x = 0; x < WORLD_GRID_SIZE; x += 1) {
+			if (roadTiles.has(tileId(x, z))) continue;
+			const roadDirection = neighborDirections.find((direction) =>
+				roadTiles.has(tileId(wrapTile(x + direction.x), wrapTile(z + direction.z))),
+			);
+			if (!roadDirection) continue;
+
+			buildingCandidates.push({
+				variant: 0,
+				x: tileToWorld(x) - roadDirection.x * 0.55,
+				z: tileToWorld(z) - roadDirection.z * 0.55,
+				rotation: roadDirection.x !== 0 ? 0 : Math.PI / 2,
+				scale: 0.9 + buildingRandom() * 0.18,
+				roll: buildingRandom(),
+			});
+		}
+	}
+
+	function placeBuilding(candidate: BuildingPlacement & { roll: number }): void {
+		if (buildings.length >= 16) return;
+		if (
+			buildings.some(
+				(building) =>
+					wrappedPointDistance(building, candidate, WORLD_SPAN) < buildingSpacing,
+			)
+		) return;
+		buildings.push({
+			variant: ((variantOffset + buildings.length) % 6) as BuildingVariant,
+			x: candidate.x,
+			z: candidate.z,
+			rotation: candidate.rotation,
+			scale: candidate.scale,
+		});
+	}
+
+	for (const candidate of buildingCandidates) {
+		if (candidate.roll < 0.58) placeBuilding(candidate);
+	}
+	if (buildings.length < 6) {
+		for (const candidate of buildingCandidates) placeBuilding(candidate);
+	}
 	const grassRandom = createRandom(seed ^ 0x7f4a7c15);
 	const grass: GrassPlacement[] = [];
 	const roadSurface = createRoadSurfaceQuery({
@@ -186,6 +257,12 @@ export function generateWorld(seed: number): WorldLayout {
 			for (let patch = 0; patch < 4; patch += 1) {
 				const grassX = tileToWorld(x) + (grassRandom() - 0.5) * WORLD_TILE_SIZE * 0.84;
 				const grassZ = tileToWorld(z) + (grassRandom() - 0.5) * WORLD_TILE_SIZE * 0.84;
+				if (
+					buildings.some(
+						(building) =>
+							wrappedPointDistance(building, { x: grassX, z: grassZ }, WORLD_SPAN) < 4,
+					)
+				) continue;
 				const kind: GrassKind = grassRandom() < 0.14 ? 'wild' : 'field';
 				const scale = 0.72 + grassRandom() * 0.58;
 				const clearance = grassPatchRadius(kind, scale) + 0.25;
@@ -230,10 +307,19 @@ export function generateWorld(seed: number): WorldLayout {
 			if (!kind) continue;
 
 			const jitter = kind === 'cottage' ? 0.08 : 0.26;
+			const propX = tileToWorld(x) + (random() - 0.5) * WORLD_TILE_SIZE * jitter;
+			const propZ = tileToWorld(z) + (random() - 0.5) * WORLD_TILE_SIZE * jitter;
+			if (
+				buildings.some(
+					(building) =>
+						wrappedPointDistance(building, { x: propX, z: propZ }, WORLD_SPAN) <
+						(kind === 'cottage' ? 5 : 3.5),
+				)
+			) continue;
 			props.push({
 				kind,
-				x: tileToWorld(x) + (random() - 0.5) * WORLD_TILE_SIZE * jitter,
-				z: tileToWorld(z) + (random() - 0.5) * WORLD_TILE_SIZE * jitter,
+				x: propX,
+				z: propZ,
 				rotation: random() * Math.PI * 2,
 				scale: 0.82 + random() * 0.36,
 			});
@@ -247,6 +333,7 @@ export function generateWorld(seed: number): WorldLayout {
 		roads,
 		props,
 		grass,
+		buildings,
 	};
 }
 
@@ -354,7 +441,10 @@ export function getRoadsidePosts(layout: RoadLayout): WorldPoint[] {
 }
 
 export function createCollisionIndex(
-	layout: RoadLayout & { props: readonly PropPlacement[] },
+	layout: RoadLayout & {
+		props: readonly PropPlacement[];
+		buildings?: readonly BuildingPlacement[];
+	},
 ): CollisionIndex {
 	const radiusByKind: Readonly<Record<Exclude<PropKind, 'flowers'>, number>> = {
 		tree: 1.25,
@@ -365,6 +455,9 @@ export function createCollisionIndex(
 		if (prop.kind === 'flowers') return [];
 		return [{ x: prop.x, z: prop.z, radius: radiusByKind[prop.kind] * prop.scale }];
 	});
+	for (const building of layout.buildings ?? []) {
+		obstacles.push({ x: building.x, z: building.z, radius: 2.75 * building.scale });
+	}
 	for (const post of getRoadsidePosts(layout)) obstacles.push({ ...post, radius: 0.25 });
 
 	return {

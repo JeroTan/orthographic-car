@@ -129,6 +129,55 @@ describe('procedural world', () => {
 		expect(terrain.grassDensityAt(0, 0)).toBe(0);
 	});
 
+	it('places varied buildings beside roads with open lots between them', () => {
+		const world = generateWorld(2607);
+		const terrain = createTerrainIndex(world);
+		const distances = world.buildings.flatMap((building, index) =>
+			world.buildings.slice(index + 1).map((other) => {
+				const directX = Math.abs(building.x - other.x) % world.worldSpan;
+				const directZ = Math.abs(building.z - other.z) % world.worldSpan;
+				return Math.hypot(
+					Math.min(directX, world.worldSpan - directX),
+					Math.min(directZ, world.worldSpan - directZ),
+				);
+			}),
+		);
+		const roadProbeDistances = [4, 6, 8, 10];
+		const cardinalDirections = [
+			{ x: 1, z: 0 },
+			{ x: -1, z: 0 },
+			{ x: 0, z: 1 },
+			{ x: 0, z: -1 },
+		];
+
+		expect({
+			count: world.buildings.length,
+			variantCount: new Set(world.buildings.map((building) => building.variant)).size,
+			repeatable: generateWorld(2607).buildings,
+			minimumSpacing: Math.min(...distances),
+			allNearRoads: world.buildings.every((building) =>
+				cardinalDirections.some((direction) =>
+					roadProbeDistances.some((distance) =>
+						terrain.isRoadAt(
+							building.x + direction.x * distance,
+							building.z + direction.z * distance,
+						),
+					),
+				),
+			),
+		}).toEqual({
+			count: expect.any(Number),
+			variantCount: expect.any(Number),
+			repeatable: world.buildings,
+			minimumSpacing: expect.any(Number),
+			allNearRoads: true,
+		});
+		expect(world.buildings.length).toBeGreaterThanOrEqual(6);
+		expect(world.buildings.length).toBeLessThanOrEqual(18);
+		expect(new Set(world.buildings.map((building) => building.variant)).size).toBeGreaterThanOrEqual(4);
+		expect(Math.min(...distances)).toBeGreaterThanOrEqual(10);
+	});
+
 	it('builds reproducible seed-dependent urban plans without zigzags or asphalt blobs', () => {
 		const worlds = [1, 2, 3].map((seed) => generateWorld(seed));
 		const signatures = worlds.map((world) =>
@@ -185,6 +234,15 @@ describe('procedural world', () => {
 		};
 
 		expect(createCollisionIndex(world).intersectsCircle(8.5, 4, 0.5)).toBe(true);
+	});
+
+	it('treats residential buildings as solid scenery', () => {
+		const world = generateWorld(2607);
+		const building = world.buildings[0];
+
+		expect(createCollisionIndex(world).intersectsCircle(building.x, building.z, 0.5)).toBe(
+			true,
+		);
 	});
 
 	it('places roadside lamps outside road tiles', () => {
