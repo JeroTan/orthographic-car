@@ -59,6 +59,11 @@ const ROAD_GRIP = 10;
 const HANDBRAKE_REAR_GRIP = 1.2;
 const CAR_COLLISION_RADIUS = 1.25;
 const CAR_COLLISION_OFFSET = 1.1;
+const WORLD_SPEED_TO_KMH = 5.2;
+
+export function toSpeedometerKmh(longitudinalSpeed: number): number {
+	return Math.round(Math.abs(longitudinalSpeed) * WORLD_SPEED_TO_KMH);
+}
 
 const SURFACE_HANDLING = {
 	road: {

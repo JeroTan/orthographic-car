@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
 
 import type { GameScene } from '../game/scene';
-import type { VehicleInput } from '../game/vehicle';
+import { toSpeedometerKmh, type VehicleInput } from '../game/vehicle';
 
 type Control = keyof VehicleInput;
 
@@ -47,7 +47,7 @@ const controlButtons: ReadonlyArray<{
 let game: GameScene | undefined;
 let startToken = 0;
 
-const displaySpeed = computed(() => Math.round(speed.value * 5.2));
+const displaySpeed = computed(() => toSpeedometerKmh(speed.value));
 const surfaceLabel = computed(() => (surface.value === 'road' ? 'Old road' : 'Wild meadow'));
 
 function setControl(control: Control, pressed: boolean): void {

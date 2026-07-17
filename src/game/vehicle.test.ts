@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { createVehicleController } from './vehicle';
+import { createVehicleController, toSpeedometerKmh } from './vehicle';
 import { createCollisionIndex, createRoadIndex, type WorldLayout } from './world';
 
 describe('vehicle controller', () => {
@@ -17,6 +17,10 @@ describe('vehicle controller', () => {
 
 		vehicle.step(0.5, { accelerate: false, brake: true, left: false, right: false });
 		expect(vehicle.state.speed).toBeCloseTo(2, 4);
+	});
+
+	it('shows reverse motion as positive speedometer speed', () => {
+		expect([toSpeedometerKmh(12), toSpeedometerKmh(-12)]).toEqual([62, 62]);
 	});
 
 	it('steers toward the pressed side in the orthographic view', () => {
