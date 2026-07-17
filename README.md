@@ -5,7 +5,7 @@ Small procedural orthographic driving world. Built with Astro, Vue 3, and Three.
 ## Play
 
 - `W` or `ArrowUp`: accelerate
-- `S` or `ArrowDown`: brake/decelerate
+- `S` or `ArrowDown`: brake; keep holding after stopping to reverse
 - `A`/`D` or `ArrowLeft`/`ArrowRight`: steer
 - On-screen buttons support pointer/touch controls.
 - Drive through any edge; 18×18 map repeats seamlessly.

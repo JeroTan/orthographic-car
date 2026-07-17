@@ -37,7 +37,7 @@ const controlButtons: ReadonlyArray<{
 }> = [
 	{ control: 'accelerate', className: 'key-up', key: 'W', arrow: '↑', label: 'Accelerate' },
 	{ control: 'left', className: 'key-left', key: 'A', arrow: '←', label: 'Steer left' },
-	{ control: 'brake', className: 'key-down', key: 'S', arrow: '↓', label: 'Brake' },
+	{ control: 'brake', className: 'key-down', key: 'S', arrow: '↓', label: 'Brake or reverse' },
 	{ control: 'right', className: 'key-right', key: 'D', arrow: '→', label: 'Steer right' },
 ];
 

@@ -10,7 +10,7 @@ Audit date: 2026-07-17. Scope: original orthographic driving-world request.
 | Movable car | [`vehicle.ts`](../src/game/vehicle.ts) exposes controller state and `step()` movement. `scene.ts` applies state to car group every frame. | Vehicle test suite passes movement and steering behavior. |
 | Arrow keys and WASD | [`CarGame.vue`](../src/components/CarGame.vue) maps `Arrow*` plus `KeyW/A/S/D` to same four controls. | Typecheck validates mapping; on-screen pointer controls use same state seam. |
 | Up/W accelerates | Controller adds forward acceleration and caps maximum speed. | `vehicle.test.ts`: “accelerates forward and slows when braking.” |
-| Down/S decelerates | Brake reduces current speed to zero and does not force reverse. | Same behavior test verifies expected braking rate. |
+| Down/S decelerates, then reverses | Brake reduces forward speed to zero; keeping it held accelerates backward at a lower capped speed. | Vehicle tests verify braking rate and reverse movement after stopping. |
 | Random living environment | Seeded generator places trees, rocks, flowers, and cottages. Renderer adds road lamps. | `world.test.ts` verifies scenery exists and changes with seed. Visual capture confirms all prop types used by seed when present. |
 | Roads | Generator creates two-tile-wide looping road routes; renderer batches shoulders and surfaces. | World tests verify road presence and seed variation. Visual capture confirms readable road network. |
 | Procedural small map | [`world.ts`](../src/game/world.ts) generates 18×18 layout from seed. “New map” advances seed and rebuilds scene. | Tests verify 18×18/144-unit contract and different seeded outputs. |
@@ -37,7 +37,7 @@ npm run build
 Audit result:
 
 - Astro diagnostics: 0 errors, 0 warnings, 0 hints.
-- Vitest: 2 files, 6 tests, all passing.
+- Vitest: 2 files, 7 tests, all passing.
 - Astro: one static page built into `dist/`.
 - Cloudflare runtime dependencies/config: none.
 
@@ -46,5 +46,5 @@ Audit result:
 - Map starts small at 18×18 tiles, per request.
 - Driving is lightweight arcade movement, not full rigid-body physics.
 - Environment props are visual; car does not collide with them.
-- Brake stops car at zero; reverse gear is not added because request describes S/down as decelerate.
+- Reverse speed is deliberately capped below forward speed for controllable arcade handling.
 - Azure target is static hosting. Adding server routes later requires new architecture/deployment decision.
