@@ -112,6 +112,25 @@ export function buildRoadDecorations(layout: RoadLayout): RoadDecorationData {
 		if (north && south && !west && !east) {
 			addStraightCenterDashes(centerX, centerZ, 'vertical');
 		}
+		const horizontalDirection = west !== east ? (west ? -1 : 1) : 0;
+		const verticalDirection = north !== south ? (north ? -1 : 1) : 0;
+		if (horizontalDirection !== 0 && verticalDirection !== 0) {
+			const curveCenterX = centerX + horizontalDirection * halfTile;
+			const curveCenterZ = centerZ + verticalDirection * halfTile;
+			const turnSegments = 6;
+			for (let segment = 0; segment < turnSegments; segment += 2) {
+				const angle = ((segment + 0.5) / turnSegments) * (Math.PI / 2);
+				const tangentX = -horizontalDirection * Math.cos(angle);
+				const tangentZ = verticalDirection * Math.sin(angle);
+				centerDashes.push({
+					x: curveCenterX - horizontalDirection * halfTile * Math.sin(angle),
+					z: curveCenterZ - verticalDirection * halfTile * Math.cos(angle),
+					width: halfTile * (Math.PI / 2 / turnSegments) * 0.82,
+					depth: lineThickness,
+					rotation: Math.atan2(-tangentZ, tangentX),
+				});
+			}
+		}
 		if (connectedDirections.filter((direction) => direction.connected).length >= 3) {
 			for (const direction of connectedDirections) {
 				if (!direction.connected) continue;
@@ -144,12 +163,11 @@ export function buildRoadDecorations(layout: RoadLayout): RoadDecorationData {
 		}
 	}
 
-	const straightBoundaryCount = edgeLines.length;
 	const cornerJoins = getRoadCornerJoins(layout);
 	const epsilon = 0.001;
 	for (const join of cornerJoins) {
 		const verticalBoundary = edgeLines.findIndex((edge, index) => {
-			if (index >= straightBoundaryCount || edge.width !== lineThickness) return false;
+			if (edge.width !== lineThickness) return false;
 			const pavement = pavements[index];
 			const endpointZ = edge.z - join.directionZ * edge.depth / 2;
 			return (
@@ -166,7 +184,7 @@ export function buildRoadDecorations(layout: RoadLayout): RoadDecorationData {
 		}
 
 		const horizontalBoundary = edgeLines.findIndex((edge, index) => {
-			if (index >= straightBoundaryCount || edge.depth !== lineThickness) return false;
+			if (edge.depth !== lineThickness) return false;
 			const pavement = pavements[index];
 			const endpointX = edge.x - join.directionX * edge.width / 2;
 			return (

@@ -161,4 +161,21 @@ describe('road surface', () => {
 			).length,
 		}).toEqual({ curvedEdgeSegments: 6, curvedPavementSegments: 6 });
 	});
+
+	it('continues dashed center markings through a simple road turn', () => {
+		const decorations = buildRoadDecorations(
+			roadLayout(
+				[
+					{ x: 2, z: 2 },
+					{ x: 1, z: 2 },
+					{ x: 2, z: 3 },
+				],
+				5,
+			),
+		);
+
+		expect(
+			decorations.centerDashes.filter((dash) => Math.abs(Math.sin((dash.rotation ?? 0) * 2)) > 0.01),
+		).toHaveLength(3);
+	});
 });
