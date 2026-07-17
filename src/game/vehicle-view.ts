@@ -1,19 +1,28 @@
 import * as THREE from 'three';
 
+import type { PorscheVisualModel, PorscheWheelVisual } from './porsche-model';
 import type { VehicleState } from './vehicle';
+
+interface WheelAxle {
+	pivots: THREE.Group[];
+	wheels: THREE.Mesh[];
+}
 
 interface CarVisual {
 	group: THREE.Group;
 	chassis: THREE.Group;
-	frontWheelPivots: THREE.Group[];
-	frontWheels: THREE.Mesh[];
-	rearWheels: THREE.Mesh[];
+	fallbackBody: THREE.Group;
+	fallbackWheels: THREE.Mesh[];
+	frontAxle: WheelAxle;
+	rearAxle: WheelAxle;
 }
 
 function addCar(scene: THREE.Scene): CarVisual {
 	const group = new THREE.Group();
 	const chassis = new THREE.Group();
+	const fallbackBody = new THREE.Group();
 	group.add(chassis);
+	chassis.add(fallbackBody);
 	const red = new THREE.MeshLambertMaterial({ color: 0xd9523f });
 	const cream = new THREE.MeshLambertMaterial({ color: 0xf5d99d });
 	const glass = new THREE.MeshLambertMaterial({ color: 0x8fc5c2 });
@@ -22,25 +31,25 @@ function addCar(scene: THREE.Scene): CarVisual {
 
 	const body = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.65, 4.3), red);
 	body.position.y = 0.85;
-	chassis.add(body);
+	fallbackBody.add(body);
 
 	const hood = new THREE.Mesh(new THREE.BoxGeometry(2.35, 0.34, 1.35), cream);
 	hood.position.set(0, 1.26, 1.12);
-	chassis.add(hood);
+	fallbackBody.add(hood);
 
 	const cabin = new THREE.Mesh(new THREE.BoxGeometry(2.08, 0.92, 1.75), glass);
 	cabin.position.set(0, 1.58, -0.46);
-	chassis.add(cabin);
+	fallbackBody.add(cabin);
 
 	const roof = new THREE.Mesh(new THREE.BoxGeometry(2.22, 0.18, 1.92), cream);
 	roof.position.set(0, 2.1, -0.46);
-	chassis.add(roof);
+	fallbackBody.add(roof);
 
 	const wheelGeometry = new THREE.CylinderGeometry(0.48, 0.48, 0.36, 8);
 	wheelGeometry.rotateZ(Math.PI / 2);
-	const frontWheelPivots: THREE.Group[] = [];
-	const frontWheels: THREE.Mesh[] = [];
-	const rearWheels: THREE.Mesh[] = [];
+	const frontAxle: WheelAxle = { pivots: [], wheels: [] };
+	const rearAxle: WheelAxle = { pivots: [], wheels: [] };
+	const fallbackWheels: THREE.Mesh[] = [];
 	for (const x of [-1.36, 1.36]) {
 		for (const z of [-1.32, 1.32]) {
 			const pivot = new THREE.Group();
@@ -48,11 +57,13 @@ function addCar(scene: THREE.Scene): CarVisual {
 			const wheel = new THREE.Mesh(wheelGeometry, dark);
 			pivot.add(wheel);
 			group.add(pivot);
+			fallbackWheels.push(wheel);
 			if (z > 0) {
-				frontWheelPivots.push(pivot);
-				frontWheels.push(wheel);
+				frontAxle.pivots.push(pivot);
+				frontAxle.wheels.push(wheel);
 			} else {
-				rearWheels.push(wheel);
+				rearAxle.pivots.push(pivot);
+				rearAxle.wheels.push(wheel);
 			}
 		}
 	}
@@ -60,7 +71,7 @@ function addCar(scene: THREE.Scene): CarVisual {
 	for (const x of [-0.78, 0.78]) {
 		const headlight = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.22, 0.08), light);
 		headlight.position.set(x, 0.95, 2.18);
-		chassis.add(headlight);
+		fallbackBody.add(headlight);
 	}
 
 	const shadow = new THREE.Mesh(
@@ -74,7 +85,44 @@ function addCar(scene: THREE.Scene): CarVisual {
 
 	group.position.y = 0.06;
 	scene.add(group);
-	return { group, chassis, frontWheelPivots, frontWheels, rearWheels };
+	return {
+		group,
+		chassis,
+		fallbackBody,
+		fallbackWheels,
+		frontAxle,
+		rearAxle,
+	};
+}
+
+function attachPorscheModel(car: CarVisual, model: PorscheVisualModel): void {
+	car.fallbackBody.visible = false;
+	for (const wheel of car.fallbackWheels) wheel.visible = false;
+	car.chassis.add(model.body);
+
+	function replaceWheels(
+		axle: WheelAxle,
+		replacements: readonly PorscheWheelVisual[],
+	): void {
+		axle.wheels.length = 0;
+		for (let index = 0; index < replacements.length; index += 1) {
+			const wheel = replacements[index];
+			const pivot = axle.pivots[index];
+			pivot.position.copy(wheel.position);
+			pivot.add(wheel.mesh);
+			axle.wheels.push(wheel.mesh);
+		}
+	}
+
+	replaceWheels(car.frontAxle, [model.wheels.frontLeft, model.wheels.frontRight]);
+	replaceWheels(car.rearAxle, [
+		model.wheels.rearLeft,
+		model.wheels.rearRight,
+	]);
+}
+
+function finiteOr(value: number, fallback: number): number {
+	return Number.isFinite(value) ? value : fallback;
 }
 
 interface TrailMark {
@@ -187,7 +235,7 @@ function addTireEffects(scene: THREE.Scene): TireEffects {
 	}
 
 	function rearWheelPosition(state: VehicleState, localX: number) {
-		const localZ = -1.35;
+		const localZ = -1.33;
 		return {
 			x: state.x + Math.cos(state.heading) * localX + Math.sin(state.heading) * localZ,
 			z: state.z - Math.sin(state.heading) * localX + Math.cos(state.heading) * localZ,
@@ -195,7 +243,7 @@ function addTireEffects(scene: THREE.Scene): TireEffects {
 	}
 
 	function emitTrailPair(state: VehicleState, intensity: number): void {
-		for (const localX of [-1.02, 1.02]) {
+		for (const localX of [-0.81, 0.81]) {
 			const wheelPosition = rearWheelPosition(state, localX);
 			const mark = trails[trailCursor];
 			trailCursor = (trailCursor + 1) % TRAIL_POOL_SIZE;
@@ -211,7 +259,7 @@ function addTireEffects(scene: THREE.Scene): TireEffects {
 	}
 
 	function emitSmokePair(state: VehicleState, intensity: number): void {
-		for (const localX of [-1.02, 1.02]) {
+		for (const localX of [-0.81, 0.81]) {
 			const wheelPosition = rearWheelPosition(state, localX);
 			const puff = smoke[smokeCursor];
 			const phase = smokeCursor * 2.37;
@@ -313,57 +361,77 @@ function addTireEffects(scene: THREE.Scene): TireEffects {
 
 export interface VehicleView {
 	update(deltaSeconds: number, state: VehicleState): boolean;
+	destroy(): void;
 }
 
-export function addVehicleView(scene: THREE.Scene): VehicleView {
+export function addVehicleView(scene: THREE.Scene, onModelReady: () => void): VehicleView {
 	const car = addCar(scene);
 	const tireEffects = addTireEffects(scene);
+	let destroyed = false;
+	void import('./porsche-model')
+		.then(({ loadPorscheVisualModel }) => loadPorscheVisualModel())
+		.then((model) => {
+			if (destroyed) {
+				model.dispose();
+				return;
+			}
+			attachPorscheModel(car, model);
+			onModelReady();
+		})
+		.catch((error: unknown) => {
+			console.warn('Porsche model could not load; using lightweight fallback.', error);
+		});
 
 	return {
 		update(delta, state) {
 		car.group.position.x = state.x;
 		car.group.position.z = state.z;
 		car.group.rotation.y = state.heading;
-		const visualResponse = 1 - Math.exp(-delta * 11);
-		const accelerationStretch = Math.max(0, state.longitudinalLoad);
-		const brakingSquash = Math.max(0, -state.longitudinalLoad);
+		const visualResponse = 1 - Math.exp(-Math.max(0, finiteOr(delta, 0)) * 11);
+		const longitudinalLoad = THREE.MathUtils.clamp(finiteOr(state.longitudinalLoad, 0), -1, 1);
+		const lateralLoad = THREE.MathUtils.clamp(finiteOr(state.lateralLoad, 0), -1, 1);
+		const accelerationStretch = Math.max(0, longitudinalLoad);
+		const brakingSquash = Math.max(0, -longitudinalLoad);
 		car.chassis.rotation.x = THREE.MathUtils.lerp(
-			car.chassis.rotation.x,
-			-state.longitudinalLoad * 0.075,
+			finiteOr(car.chassis.rotation.x, 0),
+			-longitudinalLoad * 0.075,
 			visualResponse,
 		);
 		car.chassis.rotation.z = THREE.MathUtils.lerp(
-			car.chassis.rotation.z,
-			state.lateralLoad * 0.09,
+			finiteOr(car.chassis.rotation.z, 0),
+			lateralLoad * 0.09,
 			visualResponse,
 		);
 		car.chassis.scale.x = THREE.MathUtils.lerp(
-			car.chassis.scale.x,
+			finiteOr(car.chassis.scale.x, 1),
 			1 + brakingSquash * 0.045,
 			visualResponse,
 		);
 		car.chassis.scale.y = THREE.MathUtils.lerp(
-			car.chassis.scale.y,
+			finiteOr(car.chassis.scale.y, 1),
 			1 - accelerationStretch * 0.025 - brakingSquash * 0.09,
 			visualResponse,
 		);
 		car.chassis.scale.z = THREE.MathUtils.lerp(
-			car.chassis.scale.z,
+			finiteOr(car.chassis.scale.z, 1),
 			1 + accelerationStretch * 0.055,
 			visualResponse,
 		);
-		for (const pivot of car.frontWheelPivots) {
+		for (const pivot of car.frontAxle.pivots) {
 			pivot.rotation.y = THREE.MathUtils.lerp(
 				pivot.rotation.y,
 				state.steeringAngle,
 				visualResponse,
 			);
 		}
-		for (const wheel of car.frontWheels) wheel.rotation.x -= state.speed * delta * 0.75;
+		for (const wheel of car.frontAxle.wheels) wheel.rotation.x -= state.speed * delta * 0.75;
 		const rearWheelSpeed = state.speed + state.rearSlip * 8 * Math.sign(state.speed || 1);
-		for (const wheel of car.rearWheels) wheel.rotation.x -= rearWheelSpeed * delta * 0.75;
+		for (const wheel of car.rearAxle.wheels) wheel.rotation.x -= rearWheelSpeed * delta * 0.75;
 		const effectsActive = tireEffects.update(delta, state);
 		return effectsActive;
+		},
+		destroy() {
+			destroyed = true;
 		},
 	};
 }

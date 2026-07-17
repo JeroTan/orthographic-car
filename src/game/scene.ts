@@ -298,7 +298,7 @@ export function createGameScene(container: HTMLElement, options: GameSceneOption
 	scene.add(sun);
 
 	addWorld(scene, layout);
-	const vehicleView = addVehicleView(scene);
+	const vehicleView = addVehicleView(scene, () => startLoop());
 	let destroyed = false;
 	let lastTime = performance.now();
 	let telemetryElapsed = 0;
@@ -378,6 +378,7 @@ export function createGameScene(container: HTMLElement, options: GameSceneOption
 			if (destroyed) return;
 			destroyed = true;
 			stopLoop();
+			vehicleView.destroy();
 			document.removeEventListener('visibilitychange', handleVisibilityChange);
 			resizeObserver.disconnect();
 			disposeScene(scene);
