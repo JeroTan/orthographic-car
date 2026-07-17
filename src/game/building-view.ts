@@ -116,21 +116,21 @@ function updateInstances(
 	worldSpan: number,
 	scratch: TransformScratch,
 ): void {
-	for (const group of instances) {
-		for (let index = 0; index < group.placements.length; index += 1) {
-				const building = group.placements[index];
-				const modelScale = MODEL_SCALE * building.scale;
-				scratch.position.set(
-					wrappedNear(building.x, carPosition.x, worldSpan),
-					group.packed.halfExtent.y * modelScale + 0.02,
-					wrappedNear(building.z, carPosition.z, worldSpan),
-				);
-				scratch.rotation.setFromEuler(scratch.euler.set(0, building.rotation, 0));
-				scratch.scale.copy(group.packed.halfExtent).multiplyScalar(modelScale);
-				scratch.matrix.compose(scratch.position, scratch.rotation, scratch.scale);
-				group.mesh.setMatrixAt(index, scratch.matrix);
+	for (const variantInstances of instances) {
+		for (let index = 0; index < variantInstances.placements.length; index += 1) {
+			const building = variantInstances.placements[index];
+			const modelScale = MODEL_SCALE * building.scale;
+			scratch.position.set(
+				wrappedNear(building.x, carPosition.x, worldSpan),
+				variantInstances.packed.halfExtent.y * modelScale + 0.02,
+				wrappedNear(building.z, carPosition.z, worldSpan),
+			);
+			scratch.rotation.setFromEuler(scratch.euler.set(0, building.rotation, 0));
+			scratch.scale.copy(variantInstances.packed.halfExtent).multiplyScalar(modelScale);
+			scratch.matrix.compose(scratch.position, scratch.rotation, scratch.scale);
+			variantInstances.mesh.setMatrixAt(index, scratch.matrix);
 		}
-		group.mesh.instanceMatrix.needsUpdate = true;
+		variantInstances.mesh.instanceMatrix.needsUpdate = true;
 	}
 }
 
