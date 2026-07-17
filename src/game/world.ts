@@ -27,7 +27,6 @@ export type GrassKind = 'field' | 'wild';
 
 export interface GrassPlacement extends TransformPlacement {
 	kind: GrassKind;
-	phase: number;
 }
 
 export interface RoadLayout {
@@ -43,7 +42,7 @@ export interface WorldLayout extends RoadLayout {
 }
 
 export interface TerrainIndex {
-	hasWorldPosition(x: number, z: number): boolean;
+	isRoadAt(x: number, z: number): boolean;
 	surfaceAt(x: number, z: number): 'road' | 'meadow';
 	grassDensityAt(x: number, z: number): number;
 }
@@ -206,7 +205,6 @@ export function generateWorld(seed: number): WorldLayout {
 					z: grassZ,
 					rotation: grassRandom() * Math.PI * 2,
 					scale,
-					phase: grassRandom() * Math.PI * 2,
 				});
 			}
 		}
@@ -256,45 +254,28 @@ export function createTerrainIndex(
 	layout: RoadLayout & { grass?: readonly GrassPlacement[] },
 ): TerrainIndex {
 	const roadSurface = createRoadSurfaceQuery(layout);
-	const hasWorldPosition = (x: number, z: number) => roadSurface.containsPoint(x, z);
+	const isRoadAt = (x: number, z: number) => roadSurface.containsPoint(x, z);
 	const grassBuckets = new Map<number, GrassPlacement[]>();
 	for (const grass of layout.grass ?? []) {
-		const tileX = Math.floor(
-			(wrapWorldCoordinate(grass.x, layout.worldSpan) + layout.worldSpan / 2) /
-				layout.tileSize,
-		);
-		const tileZ = Math.floor(
-			(wrapWorldCoordinate(grass.z, layout.worldSpan) + layout.worldSpan / 2) /
-				layout.tileSize,
-		);
-		const key = wrapLayoutIndex(tileX, layout.gridSize) +
-			wrapLayoutIndex(tileZ, layout.gridSize) * layout.gridSize;
+		const key = layoutTileKeyAtWorldPosition(layout, grass.x, grass.z);
 		const bucket = grassBuckets.get(key) ?? [];
 		bucket.push(grass);
 		grassBuckets.set(key, bucket);
 	}
 
 	return {
-		hasWorldPosition,
+		isRoadAt,
 		surfaceAt(x, z) {
-			return hasWorldPosition(x, z) ? 'road' : 'meadow';
+			return isRoadAt(x, z) ? 'road' : 'meadow';
 		},
 		grassDensityAt(x, z) {
-			if (hasWorldPosition(x, z) || grassBuckets.size === 0) return 0;
-			const tileX = Math.floor(
-				(wrapWorldCoordinate(x, layout.worldSpan) + layout.worldSpan / 2) /
-					layout.tileSize,
-			);
-			const tileZ = Math.floor(
-				(wrapWorldCoordinate(z, layout.worldSpan) + layout.worldSpan / 2) /
-					layout.tileSize,
-			);
+			if (isRoadAt(x, z) || grassBuckets.size === 0) return 0;
+			const tileX = worldPositionToTileIndex(layout, x);
+			const tileZ = worldPositionToTileIndex(layout, z);
 			let density = 0;
 			for (let offsetZ = -1; offsetZ <= 1; offsetZ += 1) {
 				for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
-					const key =
-						wrapLayoutIndex(tileX + offsetX, layout.gridSize) +
-						wrapLayoutIndex(tileZ + offsetZ, layout.gridSize) * layout.gridSize;
+					const key = layoutTileKey(layout, tileX + offsetX, tileZ + offsetZ);
 					for (const grass of grassBuckets.get(key) ?? []) {
 						const distance = Math.hypot(
 							wrappedDistance(x, grass.x, layout.worldSpan),
@@ -315,6 +296,27 @@ function wrapLayoutIndex(value: number, gridSize: number): number {
 	return ((value % gridSize) + gridSize) % gridSize;
 }
 
+function worldPositionToTileIndex(layout: RoadLayout, value: number): number {
+	return Math.floor(
+		(wrapWorldCoordinate(value, layout.worldSpan) + layout.worldSpan / 2) / layout.tileSize,
+	);
+}
+
+function layoutTileKey(layout: RoadLayout, tileX: number, tileZ: number): number {
+	return (
+		wrapLayoutIndex(tileX, layout.gridSize) +
+		wrapLayoutIndex(tileZ, layout.gridSize) * layout.gridSize
+	);
+}
+
+function layoutTileKeyAtWorldPosition(layout: RoadLayout, x: number, z: number): number {
+	return layoutTileKey(
+		layout,
+		worldPositionToTileIndex(layout, x),
+		worldPositionToTileIndex(layout, z),
+	);
+}
+
 export function getRoadsidePosts(layout: RoadLayout): WorldPoint[] {
 	const roadTiles = new Set(layout.roads.map((road) => road.z * layout.gridSize + road.x));
 	const directions = [
@@ -323,16 +325,14 @@ export function getRoadsidePosts(layout: RoadLayout): WorldPoint[] {
 		{ x: 0, z: 1 },
 		{ x: 0, z: -1 },
 	] as const;
-	const wrapLayoutTile = (value: number) =>
-		((value % layout.gridSize) + layout.gridSize) % layout.gridSize;
 	const roadsideOffset = layout.tileSize / 2 + 0.5;
 
 	return layout.roads.flatMap((road, index) => {
 		if (index % 9 !== 0) return [];
 
 		for (const direction of directions) {
-			const neighborX = wrapLayoutTile(road.x + direction.x);
-			const neighborZ = wrapLayoutTile(road.z + direction.z);
+			const neighborX = wrapLayoutIndex(road.x + direction.x, layout.gridSize);
+			const neighborZ = wrapLayoutIndex(road.z + direction.z, layout.gridSize);
 			if (roadTiles.has(neighborZ * layout.gridSize + neighborX)) continue;
 
 			return [

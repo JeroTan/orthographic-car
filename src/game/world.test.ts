@@ -93,19 +93,19 @@ describe('procedural world', () => {
 
 	it('fills meadow with deterministic grass while keeping asphalt clear', () => {
 		const world = generateWorld(1337);
-		const roadIndex = createTerrainIndex(world);
+		const terrainIndex = createTerrainIndex(world);
 
 		expect(world.grass.length).toBeGreaterThan(500);
 		expect(generateWorld(1337).grass).toEqual(world.grass);
 		expect(
-			world.grass.every((patch) => !roadIndex.hasWorldPosition(patch.x, patch.z)),
+			world.grass.every((patch) => !terrainIndex.isRoadAt(patch.x, patch.z)),
 		).toBe(true);
 		expect(
 			world.grass.every((patch) => {
 				const radius = (patch.kind === 'field' ? 1.4 : 0.9) * patch.scale + 0.25;
 				return Array.from({ length: 8 }, (_, index) => (index * Math.PI) / 4).every(
 					(angle) =>
-						!roadIndex.hasWorldPosition(
+						!terrainIndex.isRoadAt(
 							patch.x + Math.cos(angle) * radius,
 							patch.z + Math.sin(angle) * radius,
 						),
@@ -121,7 +121,7 @@ describe('procedural world', () => {
 			worldSpan: 144,
 			roads: [],
 			grass: [
-				{ kind: 'field', x: 12, z: 10, rotation: 0, scale: 1, phase: 0 },
+				{ kind: 'field', x: 12, z: 10, rotation: 0, scale: 1 },
 			],
 		});
 
@@ -195,12 +195,12 @@ describe('procedural world', () => {
 			roads: [{ x: 9, z: 9 }],
 			props: [],
 		};
-		const roadIndex = createTerrainIndex(world);
+		const terrainIndex = createTerrainIndex(world);
 		const posts = getRoadsidePosts(world);
 
 		expect({
 			count: posts.length,
-			allOutsideRoad: posts.every((post) => !roadIndex.hasWorldPosition(post.x, post.z)),
+			allOutsideRoad: posts.every((post) => !terrainIndex.isRoadAt(post.x, post.z)),
 		}).toEqual({ count: 1, allOutsideRoad: true });
 	});
 });

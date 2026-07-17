@@ -132,7 +132,7 @@ function addGrassKind(
 					0.035,
 					grass.z + mapZ * layout.worldSpan,
 				);
-				rotation.setFromEuler(euler.set(0, grass.rotation + grass.phase * 0.08, 0));
+				rotation.setFromEuler(euler.set(0, grass.rotation, 0));
 				scale.setScalar(grass.scale);
 				matrix.compose(position, rotation, scale);
 				mesh.setMatrixAt(index, matrix);

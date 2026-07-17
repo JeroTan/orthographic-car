@@ -280,11 +280,11 @@ function disposeScene(scene: THREE.Scene): void {
 
 export function createGameScene(container: HTMLElement, options: GameSceneOptions): GameScene {
 	const layout = generateWorld(options.seed);
-	const roadIndex = createTerrainIndex(layout);
+	const terrainIndex = createTerrainIndex(layout);
 	const controller = createVehicleController({
 		worldSpan: layout.worldSpan,
 		collision: createCollisionIndex(layout),
-		terrain: roadIndex,
+		terrain: terrainIndex,
 	});
 	const scene = new THREE.Scene();
 	scene.background = new THREE.Color(0xc8ddd1);
@@ -360,7 +360,7 @@ export function createGameScene(container: HTMLElement, options: GameSceneOption
 			telemetryElapsed = 0;
 			options.onTelemetry({
 				speed: state.speed,
-				surface: roadIndex.surfaceAt(state.x, state.z),
+				surface: terrainIndex.surfaceAt(state.x, state.z),
 				drawCalls: renderer.info.render.calls,
 			});
 		}

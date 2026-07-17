@@ -147,13 +147,12 @@ describe('vehicle controller', () => {
 			worldSpan: 144,
 			terrain: createTerrainIndex({
 				...meadow,
-				grass: [2, 5, 8, 11].map((z, index) => ({
+				grass: [2, 5, 8, 11].map((z) => ({
 					kind: 'field' as const,
 					x: 0,
 					z,
 					rotation: 0,
 					scale: 1.3,
-					phase: index,
 				})),
 			}),
 		});
