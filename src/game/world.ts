@@ -3,6 +3,7 @@ import { createRoadSurfaceQuery } from './road-surface';
 export const WORLD_GRID_SIZE = 18;
 export const WORLD_TILE_SIZE = 8;
 export const WORLD_SPAN = WORLD_GRID_SIZE * WORLD_TILE_SIZE;
+export const REPEATED_WORLD_OFFSETS = [-1, 0, 1] as const;
 
 export interface TileCoordinate {
 	x: number;
@@ -11,35 +12,37 @@ export interface TileCoordinate {
 
 export type PropKind = 'tree' | 'rock' | 'flowers' | 'cottage';
 
-export interface PropPlacement {
-	kind: PropKind;
+interface TransformPlacement {
 	x: number;
 	z: number;
 	rotation: number;
 	scale: number;
+}
+
+export interface PropPlacement extends TransformPlacement {
+	kind: PropKind;
 }
 
 export type GrassKind = 'field' | 'wild';
 
-export interface GrassPlacement {
+export interface GrassPlacement extends TransformPlacement {
 	kind: GrassKind;
-	x: number;
-	z: number;
-	rotation: number;
-	scale: number;
 	phase: number;
 }
 
-export interface WorldLayout {
+export interface RoadLayout {
 	gridSize: number;
 	tileSize: number;
 	worldSpan: number;
 	roads: TileCoordinate[];
+}
+
+export interface WorldLayout extends RoadLayout {
 	props: PropPlacement[];
 	grass: GrassPlacement[];
 }
 
-export interface RoadIndex {
+export interface TerrainIndex {
 	hasWorldPosition(x: number, z: number): boolean;
 	surfaceAt(x: number, z: number): 'road' | 'meadow';
 	grassDensityAt(x: number, z: number): number;
@@ -146,6 +149,10 @@ function addStaggeredBlocks(roadTiles: Set<number>, random: () => number): void 
 	}
 }
 
+function grassPatchRadius(kind: GrassKind, scale: number): number {
+	return (kind === 'field' ? 1.4 : 0.9) * scale;
+}
+
 export function generateWorld(seed: number): WorldLayout {
 	const random = createRandom(seed);
 	const roadRandom = createRandom(seed ^ 0x9e3779b9);
@@ -172,23 +179,33 @@ export function generateWorld(seed: number): WorldLayout {
 		tileSize: WORLD_TILE_SIZE,
 		worldSpan: WORLD_SPAN,
 		roads,
-		props: [],
-		grass: [],
 	});
 	for (let z = 0; z < WORLD_GRID_SIZE; z += 1) {
 		for (let x = 0; x < WORLD_GRID_SIZE; x += 1) {
 			if (roadTiles.has(tileId(x, z))) continue;
 
-			for (let patch = 0; patch < 3; patch += 1) {
+			for (let patch = 0; patch < 4; patch += 1) {
 				const grassX = tileToWorld(x) + (grassRandom() - 0.5) * WORLD_TILE_SIZE * 0.84;
 				const grassZ = tileToWorld(z) + (grassRandom() - 0.5) * WORLD_TILE_SIZE * 0.84;
-				if (roadSurface.containsPoint(grassX, grassZ)) continue;
+				const kind: GrassKind = grassRandom() < 0.14 ? 'wild' : 'field';
+				const scale = 0.72 + grassRandom() * 0.58;
+				const clearance = grassPatchRadius(kind, scale) + 0.25;
+				const overlapsRoad = Array.from(
+					{ length: 8 },
+					(_, index) => (index * Math.PI) / 4,
+				).some((angle) =>
+					roadSurface.containsPoint(
+						grassX + Math.cos(angle) * clearance,
+						grassZ + Math.sin(angle) * clearance,
+					),
+				);
+				if (roadSurface.containsPoint(grassX, grassZ) || overlapsRoad) continue;
 				grass.push({
-					kind: grassRandom() < 0.14 ? 'wild' : 'field',
+					kind,
 					x: grassX,
 					z: grassZ,
 					rotation: grassRandom() * Math.PI * 2,
-					scale: 0.72 + grassRandom() * 0.58,
+					scale,
 					phase: grassRandom() * Math.PI * 2,
 				});
 			}
@@ -235,9 +252,27 @@ export function generateWorld(seed: number): WorldLayout {
 	};
 }
 
-export function createRoadIndex(layout: WorldLayout): RoadIndex {
+export function createTerrainIndex(
+	layout: RoadLayout & { grass?: readonly GrassPlacement[] },
+): TerrainIndex {
 	const roadSurface = createRoadSurfaceQuery(layout);
 	const hasWorldPosition = (x: number, z: number) => roadSurface.containsPoint(x, z);
+	const grassBuckets = new Map<number, GrassPlacement[]>();
+	for (const grass of layout.grass ?? []) {
+		const tileX = Math.floor(
+			(wrapWorldCoordinate(grass.x, layout.worldSpan) + layout.worldSpan / 2) /
+				layout.tileSize,
+		);
+		const tileZ = Math.floor(
+			(wrapWorldCoordinate(grass.z, layout.worldSpan) + layout.worldSpan / 2) /
+				layout.tileSize,
+		);
+		const key = wrapLayoutIndex(tileX, layout.gridSize) +
+			wrapLayoutIndex(tileZ, layout.gridSize) * layout.gridSize;
+		const bucket = grassBuckets.get(key) ?? [];
+		bucket.push(grass);
+		grassBuckets.set(key, bucket);
+	}
 
 	return {
 		hasWorldPosition,
@@ -245,12 +280,42 @@ export function createRoadIndex(layout: WorldLayout): RoadIndex {
 			return hasWorldPosition(x, z) ? 'road' : 'meadow';
 		},
 		grassDensityAt(x, z) {
-			return !hasWorldPosition(x, z) && layout.grass.length > 0 ? 0.85 : 0;
+			if (hasWorldPosition(x, z) || grassBuckets.size === 0) return 0;
+			const tileX = Math.floor(
+				(wrapWorldCoordinate(x, layout.worldSpan) + layout.worldSpan / 2) /
+					layout.tileSize,
+			);
+			const tileZ = Math.floor(
+				(wrapWorldCoordinate(z, layout.worldSpan) + layout.worldSpan / 2) /
+					layout.tileSize,
+			);
+			let density = 0;
+			for (let offsetZ = -1; offsetZ <= 1; offsetZ += 1) {
+				for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
+					const key =
+						wrapLayoutIndex(tileX + offsetX, layout.gridSize) +
+						wrapLayoutIndex(tileZ + offsetZ, layout.gridSize) * layout.gridSize;
+					for (const grass of grassBuckets.get(key) ?? []) {
+						const distance = Math.hypot(
+							wrappedDistance(x, grass.x, layout.worldSpan),
+							wrappedDistance(z, grass.z, layout.worldSpan),
+						);
+						const patchRadius = grassPatchRadius(grass.kind, grass.scale);
+						const contactRadius = patchRadius + 0.9;
+						density = Math.max(density, 1 - distance / contactRadius);
+					}
+				}
+			}
+			return Math.max(0, Math.min(1, density));
 		},
 	};
 }
 
-export function getRoadsidePosts(layout: WorldLayout): WorldPoint[] {
+function wrapLayoutIndex(value: number, gridSize: number): number {
+	return ((value % gridSize) + gridSize) % gridSize;
+}
+
+export function getRoadsidePosts(layout: RoadLayout): WorldPoint[] {
 	const roadTiles = new Set(layout.roads.map((road) => road.z * layout.gridSize + road.x));
 	const directions = [
 		{ x: 1, z: 0 },
@@ -288,7 +353,9 @@ export function getRoadsidePosts(layout: WorldLayout): WorldPoint[] {
 	});
 }
 
-export function createCollisionIndex(layout: WorldLayout): CollisionIndex {
+export function createCollisionIndex(
+	layout: RoadLayout & { props: readonly PropPlacement[] },
+): CollisionIndex {
 	const radiusByKind: Readonly<Record<Exclude<PropKind, 'flowers'>, number>> = {
 		tree: 1.25,
 		rock: 0.9,

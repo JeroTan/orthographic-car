@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { createVehicleController, toSpeedometerKmh } from './vehicle';
-import { createCollisionIndex, createRoadIndex, type WorldLayout } from './world';
+import { createCollisionIndex, createTerrainIndex } from './world';
 
 describe('vehicle controller', () => {
 	function screenX(vehicle: ReturnType<typeof createVehicleController>): number {
@@ -60,13 +60,12 @@ describe('vehicle controller', () => {
 	});
 
 	it('does not pass through solid scenery', () => {
-		const world: WorldLayout = {
+		const world = {
 			gridSize: 18,
 			tileSize: 8,
 			worldSpan: 144,
 			roads: [],
-			props: [{ kind: 'tree', x: 0, z: 6, rotation: 0, scale: 1 }],
-			grass: [],
+			props: [{ kind: 'tree' as const, x: 0, z: 6, rotation: 0, scale: 1 }],
 		};
 		const vehicle = createVehicleController({
 			worldSpan: world.worldSpan,
@@ -81,21 +80,20 @@ describe('vehicle controller', () => {
 	});
 
 	it('reaches a lower top speed on meadow than on road', () => {
-		const roadWorld: WorldLayout = {
+		const roadWorld = {
 			gridSize: 18,
 			tileSize: 8,
 			worldSpan: 144,
 			roads: Array.from({ length: 18 }, (_, z) => ({ x: 9, z })),
 			props: [],
-			grass: [],
 		};
 		const road = createVehicleController({
 			worldSpan: roadWorld.worldSpan,
-			terrain: createRoadIndex(roadWorld),
+			terrain: createTerrainIndex(roadWorld),
 		});
 		const meadow = createVehicleController({
 			worldSpan: roadWorld.worldSpan,
-			terrain: createRoadIndex({ ...roadWorld, roads: [] }),
+			terrain: createTerrainIndex({ ...roadWorld, roads: [] }),
 		});
 
 		for (let frame = 0; frame < 200; frame += 1) {
@@ -108,21 +106,20 @@ describe('vehicle controller', () => {
 	});
 
 	it('accelerates more slowly on meadow than on road', () => {
-		const roadWorld: WorldLayout = {
+		const roadWorld = {
 			gridSize: 18,
 			tileSize: 8,
 			worldSpan: 144,
 			roads: Array.from({ length: 18 }, (_, z) => ({ x: 9, z })),
 			props: [],
-			grass: [],
 		};
 		const road = createVehicleController({
 			worldSpan: roadWorld.worldSpan,
-			terrain: createRoadIndex(roadWorld),
+			terrain: createTerrainIndex(roadWorld),
 		});
 		const meadow = createVehicleController({
 			worldSpan: roadWorld.worldSpan,
-			terrain: createRoadIndex({ ...roadWorld, roads: [] }),
+			terrain: createTerrainIndex({ ...roadWorld, roads: [] }),
 		});
 
 		for (let frame = 0; frame < 20; frame += 1) {
@@ -136,19 +133,29 @@ describe('vehicle controller', () => {
 	});
 
 	it('pushes through dense grass while losing speed gradually', () => {
+		const meadow = {
+			gridSize: 18,
+			tileSize: 8,
+			worldSpan: 144,
+			roads: [],
+		};
 		const bareMeadow = createVehicleController({
 			worldSpan: 144,
-			terrain: {
-				surfaceAt: () => 'meadow',
-				grassDensityAt: () => 0,
-			},
+			terrain: createTerrainIndex(meadow),
 		});
 		const denseGrass = createVehicleController({
 			worldSpan: 144,
-			terrain: {
-				surfaceAt: () => 'meadow',
-				grassDensityAt: () => 1,
-			},
+			terrain: createTerrainIndex({
+				...meadow,
+				grass: [2, 5, 8, 11].map((z, index) => ({
+					kind: 'field' as const,
+					x: 0,
+					z,
+					rotation: 0,
+					scale: 1.3,
+					phase: index,
+				})),
+			}),
 		});
 		const input = { accelerate: true, brake: false, left: false, right: false };
 
@@ -163,21 +170,20 @@ describe('vehicle controller', () => {
 	});
 
 	it('reverses more slowly on meadow than on road', () => {
-		const roadWorld: WorldLayout = {
+		const roadWorld = {
 			gridSize: 18,
 			tileSize: 8,
 			worldSpan: 144,
 			roads: Array.from({ length: 18 }, (_, z) => ({ x: 9, z })),
 			props: [],
-			grass: [],
 		};
 		const road = createVehicleController({
 			worldSpan: roadWorld.worldSpan,
-			terrain: createRoadIndex(roadWorld),
+			terrain: createTerrainIndex(roadWorld),
 		});
 		const meadow = createVehicleController({
 			worldSpan: roadWorld.worldSpan,
-			terrain: createRoadIndex({ ...roadWorld, roads: [] }),
+			terrain: createTerrainIndex({ ...roadWorld, roads: [] }),
 		});
 
 		for (let frame = 0; frame < 200; frame += 1) {
@@ -190,17 +196,16 @@ describe('vehicle controller', () => {
 	});
 
 	it('keeps momentum when leaving road for meadow', () => {
-		const world: WorldLayout = {
+		const world = {
 			gridSize: 18,
 			tileSize: 8,
 			worldSpan: 144,
 			roads: [9, 10, 11].map((z) => ({ x: 9, z })),
 			props: [],
-			grass: [],
 		};
 		const vehicle = createVehicleController({
 			worldSpan: world.worldSpan,
-			terrain: createRoadIndex(world),
+			terrain: createTerrainIndex(world),
 		});
 		const input = { accelerate: true, brake: false, left: false, right: false };
 

@@ -2,14 +2,13 @@ import * as THREE from 'three';
 
 import fieldGrassTextureUrl from '../assets/grass/grass01.png?url';
 import wildGrassTextureUrl from '../assets/grass/grass02.png?url';
-import type { GrassKind, WorldLayout } from './world';
+import type { VehicleState } from './vehicle';
+import { REPEATED_WORLD_OFFSETS, type GrassKind, type WorldLayout } from './world';
 
 export interface GrassView {
-	update(elapsedSeconds: number, carX: number, carZ: number): void;
+	update(elapsedSeconds: number, vehicle: VehicleState): void;
 	destroy(): void;
 }
-
-const MAP_OFFSETS = [-1, 0, 1] as const;
 
 function createCrossedPlanes(width: number, height: number): THREE.BufferGeometry {
 	const halfWidth = width / 2;
@@ -47,11 +46,15 @@ function createGrassMaterial(texture: THREE.Texture, tint: THREE.Color): THREE.S
 				tint: { value: tint },
 				time: { value: 0 },
 				carPosition: { value: new THREE.Vector2() },
+				carDirection: { value: new THREE.Vector2(0, 1) },
+				carSpeed: { value: 0 },
 			},
 		]),
 		vertexShader: `
 			uniform float time;
 			uniform vec2 carPosition;
+			uniform vec2 carDirection;
+			uniform float carSpeed;
 			varying vec2 vUv;
 			#include <fog_pars_vertex>
 
@@ -66,10 +69,17 @@ function createGrassMaterial(texture: THREE.Texture, tint: THREE.Color): THREE.S
 
 				vec2 carDelta = basePosition.xz - carPosition;
 				float carDistance = length(carDelta);
-				float contact = 1.0 - smoothstep(0.75, 3.2, carDistance);
-				vec2 bendDirection = normalize(carDelta + vec2(0.001));
-				worldPosition.xz += bendDirection * contact * 0.95 * tip;
-				worldPosition.y -= contact * 0.42 * tip;
+				float movement = smoothstep(0.2, 4.0, abs(carSpeed));
+				float bodyContact = 1.0 - smoothstep(0.75, 3.2, carDistance);
+				vec2 sideDirection = vec2(carDirection.y, -carDirection.x);
+				float longitudinal = dot(carDelta, carDirection);
+				float lateral = abs(dot(carDelta, sideDirection));
+				float behind = step(longitudinal, 0.0) * (1.0 - smoothstep(0.0, 5.0, -longitudinal));
+				float wake = behind * (1.0 - smoothstep(0.55, 2.2, lateral)) * 0.65;
+				float interaction = max(bodyContact, wake) * movement;
+				vec2 bendDirection = normalize(carDelta * 0.55 + carDirection + vec2(0.001));
+				worldPosition.xz += bendDirection * interaction * 1.05 * tip;
+				worldPosition.y -= interaction * 0.42 * tip;
 
 				vec4 mvPosition = modelViewMatrix * worldPosition;
 				gl_Position = projectionMatrix * mvPosition;
@@ -100,11 +110,12 @@ function addGrassKind(
 	kind: GrassKind,
 	geometry: THREE.BufferGeometry,
 	material: THREE.ShaderMaterial,
-): THREE.InstancedMesh | undefined {
+): void {
 	const placements = layout.grass.filter((grass) => grass.kind === kind);
-	if (placements.length === 0) return undefined;
+	if (placements.length === 0) return;
 
-	const instanceCount = placements.length * MAP_OFFSETS.length * MAP_OFFSETS.length;
+	const instanceCount =
+		placements.length * REPEATED_WORLD_OFFSETS.length * REPEATED_WORLD_OFFSETS.length;
 	const mesh = new THREE.InstancedMesh(geometry, material, instanceCount);
 	const matrix = new THREE.Matrix4();
 	const position = new THREE.Vector3();
@@ -113,8 +124,8 @@ function addGrassKind(
 	const euler = new THREE.Euler();
 	let index = 0;
 
-	for (const mapX of MAP_OFFSETS) {
-		for (const mapZ of MAP_OFFSETS) {
+	for (const mapX of REPEATED_WORLD_OFFSETS) {
+		for (const mapZ of REPEATED_WORLD_OFFSETS) {
 			for (const grass of placements) {
 				position.set(
 					grass.x + mapX * layout.worldSpan,
@@ -136,7 +147,6 @@ function addGrassKind(
 	mesh.updateMatrix();
 	mesh.renderOrder = 1;
 	scene.add(mesh);
-	return mesh;
 }
 
 export function addGrassView(
@@ -159,10 +169,16 @@ export function addGrassView(
 	addGrassKind(scene, layout, 'wild', createCrossedPlanes(1.8, 2.15), wildMaterial);
 
 	return {
-		update(elapsedSeconds, carX, carZ) {
+		update(elapsedSeconds, vehicle) {
+			const travelSign = Math.sign(vehicle.speed || 1);
 			for (const material of [fieldMaterial, wildMaterial]) {
 				material.uniforms.time.value = elapsedSeconds;
-				material.uniforms.carPosition.value.set(carX, carZ);
+				material.uniforms.carPosition.value.set(vehicle.x, vehicle.z);
+				material.uniforms.carDirection.value.set(
+					Math.sin(vehicle.heading) * travelSign,
+					Math.cos(vehicle.heading) * travelSign,
+				);
+				material.uniforms.carSpeed.value = vehicle.speed;
 			}
 		},
 		destroy() {

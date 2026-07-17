@@ -1,4 +1,4 @@
-import type { WorldLayout } from './world';
+import type { RoadLayout } from './world';
 
 export interface RoadSurfaceData {
 	positions: Float32Array;
@@ -20,7 +20,7 @@ export interface RoadSurfaceQuery {
 
 const ROAD_CORNER_SEGMENTS = 8;
 
-function roadTileKey(layout: WorldLayout, x: number, z: number): number {
+function roadTileKey(layout: RoadLayout, x: number, z: number): number {
 	return z * layout.gridSize + x;
 }
 
@@ -37,11 +37,11 @@ function wrappedDelta(value: number, origin: number, span: number): number {
 	return wrapCoordinate(value - origin, span);
 }
 
-function roadTileSet(layout: WorldLayout): Set<number> {
+function roadTileSet(layout: RoadLayout): Set<number> {
 	return new Set(layout.roads.map((road) => roadTileKey(layout, road.x, road.z)));
 }
 
-export function getRoadCornerJoins(layout: WorldLayout): RoadCornerJoin[] {
+export function getRoadCornerJoins(layout: RoadLayout): RoadCornerJoin[] {
 	const roadTiles = roadTileSet(layout);
 	const joins: RoadCornerJoin[] = [];
 	const origin = -layout.worldSpan / 2;
@@ -89,7 +89,7 @@ export function getRoadCornerJoins(layout: WorldLayout): RoadCornerJoin[] {
 	return joins;
 }
 
-export function createRoadSurfaceQuery(layout: WorldLayout): RoadSurfaceQuery {
+export function createRoadSurfaceQuery(layout: RoadLayout): RoadSurfaceQuery {
 	const roadTiles = roadTileSet(layout);
 	const joins = getRoadCornerJoins(layout);
 
@@ -114,7 +114,7 @@ export function createRoadSurfaceQuery(layout: WorldLayout): RoadSurfaceQuery {
 	};
 }
 
-export function buildRoadSurface(layout: WorldLayout): RoadSurfaceData {
+export function buildRoadSurface(layout: RoadLayout): RoadSurfaceData {
 	const positions: number[] = [];
 	const uvs: number[] = [];
 	const indices: number[] = [];

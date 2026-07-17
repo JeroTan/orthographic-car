@@ -7,9 +7,10 @@ import { addVehicleView } from './vehicle-view';
 import { DEFAULT_PORSCHE_COLOR, type PorscheColor } from './porsche-colors';
 import {
 	createCollisionIndex,
-	createRoadIndex,
+	createTerrainIndex,
 	generateWorld,
 	getRoadsidePosts,
+	REPEATED_WORLD_OFFSETS,
 	type PropKind,
 	type PropPlacement,
 	type WorldLayout,
@@ -34,11 +35,10 @@ export interface GameScene {
 	destroy(): void;
 }
 
-const MAP_OFFSETS = [-1, 0, 1] as const;
 const CAMERA_HEIGHT = 34;
 const CAMERA_OFFSET = 28;
 const VIEW_HEIGHT = 46;
-const IDLE_FRAME_INTERVAL_MS = 50;
+const IDLE_FRAME_INTERVAL_MS = 66;
 const ROAD_TEXTURE_URL = new URL('../assets/roads/RoadTexture2.jpg', import.meta.url).href;
 
 function makeNoiseTexture(
@@ -109,8 +109,8 @@ function matrixAt(
 
 function repeatedProps(layout: WorldLayout, kind: PropKind): Array<PropPlacement & { worldX: number; worldZ: number }> {
 	const output: Array<PropPlacement & { worldX: number; worldZ: number }> = [];
-	for (const mapX of MAP_OFFSETS) {
-		for (const mapZ of MAP_OFFSETS) {
+	for (const mapX of REPEATED_WORLD_OFFSETS) {
+		for (const mapZ of REPEATED_WORLD_OFFSETS) {
 			for (const prop of layout.props) {
 				if (prop.kind === kind) {
 					output.push({
@@ -147,8 +147,8 @@ function addWorld(scene: THREE.Scene, layout: WorldLayout, onAssetReady: () => v
 	const capTransforms: THREE.Matrix4[] = [];
 	const roadsidePosts = getRoadsidePosts(layout);
 
-	for (const mapX of MAP_OFFSETS) {
-		for (const mapZ of MAP_OFFSETS) {
+	for (const mapX of REPEATED_WORLD_OFFSETS) {
+		for (const mapZ of REPEATED_WORLD_OFFSETS) {
 			repeatedRoadTransforms.push(
 				matrixAt(
 					mapX * layout.worldSpan,
@@ -280,7 +280,7 @@ function disposeScene(scene: THREE.Scene): void {
 
 export function createGameScene(container: HTMLElement, options: GameSceneOptions): GameScene {
 	const layout = generateWorld(options.seed);
-	const roadIndex = createRoadIndex(layout);
+	const roadIndex = createTerrainIndex(layout);
 	const controller = createVehicleController({
 		worldSpan: layout.worldSpan,
 		collision: createCollisionIndex(layout),
@@ -349,7 +349,7 @@ export function createGameScene(container: HTMLElement, options: GameSceneOption
 		controller.step(delta, input);
 		const { state } = controller;
 		const effectsActive = vehicleView.update(delta, state);
-		grassView.update(now / 1000, state.x, state.z);
+		grassView.update(now / 1000, state);
 
 		camera.position.set(state.x + CAMERA_OFFSET, CAMERA_HEIGHT, state.z - CAMERA_OFFSET);
 		camera.lookAt(state.x, 0, state.z);

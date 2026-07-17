@@ -1,17 +1,15 @@
 import { describe, expect, it } from 'vitest';
 
 import { buildRoadSurface } from './road-surface';
-import { createRoadIndex, type TileCoordinate, type WorldLayout } from './world';
+import { createTerrainIndex, type RoadLayout, type TileCoordinate } from './world';
 
 describe('road surface', () => {
-	function roadLayout(roads: TileCoordinate[], gridSize = 2): WorldLayout {
+	function roadLayout(roads: TileCoordinate[], gridSize = 2): RoadLayout {
 		return {
 			gridSize,
 			tileSize: 8,
 			worldSpan: gridSize * 8,
 			roads,
-			props: [],
-			grass: [],
 		};
 	}
 
@@ -59,7 +57,7 @@ describe('road surface', () => {
 			]);
 
 		const surface = buildRoadSurface(layout);
-		const terrain = createRoadIndex(layout);
+		const terrain = createTerrainIndex(layout);
 
 		expect({
 			joinedCorner: coversPoint(surface, -1, 1),
@@ -86,7 +84,7 @@ describe('road surface', () => {
 			3,
 		);
 		const surface = buildRoadSurface(layout);
-		const terrain = createRoadIndex(layout);
+		const terrain = createTerrainIndex(layout);
 
 		expect({
 			joinedGeometry: coversPoint(surface, -13, -3),

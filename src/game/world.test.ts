@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
 	createCollisionIndex,
-	createRoadIndex,
+	createTerrainIndex,
 	generateWorld,
 	getRoadsidePosts,
 	type WorldLayout,
@@ -93,13 +93,40 @@ describe('procedural world', () => {
 
 	it('fills meadow with deterministic grass while keeping asphalt clear', () => {
 		const world = generateWorld(1337);
-		const roadIndex = createRoadIndex(world);
+		const roadIndex = createTerrainIndex(world);
 
 		expect(world.grass.length).toBeGreaterThan(500);
 		expect(generateWorld(1337).grass).toEqual(world.grass);
 		expect(
 			world.grass.every((patch) => !roadIndex.hasWorldPosition(patch.x, patch.z)),
 		).toBe(true);
+		expect(
+			world.grass.every((patch) => {
+				const radius = (patch.kind === 'field' ? 1.4 : 0.9) * patch.scale + 0.25;
+				return Array.from({ length: 8 }, (_, index) => (index * Math.PI) / 4).every(
+					(angle) =>
+						!roadIndex.hasWorldPosition(
+							patch.x + Math.cos(angle) * radius,
+							patch.z + Math.sin(angle) * radius,
+						),
+				);
+			}),
+		).toBe(true);
+	});
+
+	it('reports vegetation contact only near a grass patch', () => {
+		const terrain = createTerrainIndex({
+			gridSize: 18,
+			tileSize: 8,
+			worldSpan: 144,
+			roads: [],
+			grass: [
+				{ kind: 'field', x: 12, z: 10, rotation: 0, scale: 1, phase: 0 },
+			],
+		});
+
+		expect(terrain.grassDensityAt(12, 10)).toBeGreaterThan(0.8);
+		expect(terrain.grassDensityAt(0, 0)).toBe(0);
 	});
 
 	it('builds reproducible seed-dependent urban plans without zigzags or asphalt blobs', () => {
@@ -149,28 +176,26 @@ describe('procedural world', () => {
 	});
 
 	it('includes roadside lamps in the collision world', () => {
-		const world: WorldLayout = {
+		const world = {
 			gridSize: 18,
 			tileSize: 8,
 			worldSpan: 144,
 			roads: [{ x: 9, z: 9 }],
 			props: [],
-			grass: [],
 		};
 
 		expect(createCollisionIndex(world).intersectsCircle(8.5, 4, 0.5)).toBe(true);
 	});
 
 	it('places roadside lamps outside road tiles', () => {
-		const world: WorldLayout = {
+		const world = {
 			gridSize: 18,
 			tileSize: 8,
 			worldSpan: 144,
 			roads: [{ x: 9, z: 9 }],
 			props: [],
-			grass: [],
 		};
-		const roadIndex = createRoadIndex(world);
+		const roadIndex = createTerrainIndex(world);
 		const posts = getRoadsidePosts(world);
 
 		expect({
