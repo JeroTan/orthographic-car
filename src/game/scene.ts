@@ -2,7 +2,7 @@ import * as THREE from 'three';
 
 import { addBuildingView } from './building-view';
 import { addGrassView } from './grass-view';
-import { buildRoadSurface } from './road-surface';
+import { buildRoadDecorations, buildRoadSurface, type RoadDecorationRect } from './road-surface';
 import { createVehicleController, type VehicleInput } from './vehicle';
 import { addVehicleView } from './vehicle-view';
 import { DEFAULT_PORSCHE_COLOR, type PorscheColor } from './porsche-colors';
@@ -126,6 +126,33 @@ function repeatedProps(layout: WorldLayout, kind: PropKind): Array<PropPlacement
 	return output;
 }
 
+function repeatedDecorationTransforms(
+	layout: WorldLayout,
+	rectangles: readonly RoadDecorationRect[],
+	y: number,
+	height: number,
+): THREE.Matrix4[] {
+	const transforms: THREE.Matrix4[] = [];
+	for (const mapX of REPEATED_WORLD_OFFSETS) {
+		for (const mapZ of REPEATED_WORLD_OFFSETS) {
+			for (const rectangle of rectangles) {
+				transforms.push(
+					matrixAt(
+						rectangle.x + mapX * layout.worldSpan,
+						y,
+						rectangle.z + mapZ * layout.worldSpan,
+						0,
+						rectangle.width,
+						height,
+						rectangle.depth,
+					),
+				);
+			}
+		}
+	}
+	return transforms;
+}
+
 function addWorld(scene: THREE.Scene, layout: WorldLayout, onAssetReady: () => void): void {
 	const groundTexture = makeNoiseTexture([111, 148, 91], 26, layout.gridSize * 3);
 	const roadTexture = new THREE.TextureLoader().load(ROAD_TEXTURE_URL, onAssetReady);
@@ -182,6 +209,33 @@ function addWorld(scene: THREE.Scene, layout: WorldLayout, onAssetReady: () => v
 		roadGeometry,
 		new THREE.MeshBasicMaterial({ color: 0xffffff, map: roadTexture }),
 		repeatedRoadTransforms,
+	);
+
+	const decorations = buildRoadDecorations(layout);
+	const boxGeometry = new THREE.BoxGeometry(1, 1, 1);
+	const pavementTexture = makeNoiseTexture([145, 148, 145], 20, 2);
+	addInstancedMesh(
+		scene,
+		boxGeometry,
+		new THREE.MeshLambertMaterial({ map: pavementTexture, color: 0xc7c6bd }),
+		repeatedDecorationTransforms(layout, decorations.pavements, 0.075, 0.1),
+	);
+	addInstancedMesh(
+		scene,
+		boxGeometry,
+		new THREE.MeshBasicMaterial({ color: 0xe8bd45 }),
+		repeatedDecorationTransforms(layout, decorations.centerDashes, 0.045, 0.018),
+	);
+	addInstancedMesh(
+		scene,
+		boxGeometry,
+		new THREE.MeshBasicMaterial({ color: 0xf0eee2 }),
+		repeatedDecorationTransforms(
+			layout,
+			[...decorations.edgeLines, ...decorations.crosswalkStripes],
+			0.047,
+			0.02,
+		),
 	);
 	addInstancedMesh(
 		scene,

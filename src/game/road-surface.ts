@@ -18,6 +18,20 @@ export interface RoadSurfaceQuery {
 	containsPoint(x: number, z: number): boolean;
 }
 
+export interface RoadDecorationRect {
+	x: number;
+	z: number;
+	width: number;
+	depth: number;
+}
+
+export interface RoadDecorationData {
+	centerDashes: RoadDecorationRect[];
+	edgeLines: RoadDecorationRect[];
+	pavements: RoadDecorationRect[];
+	crosswalkStripes: RoadDecorationRect[];
+}
+
 const ROAD_CORNER_SEGMENTS = 8;
 
 function roadTileKey(layout: RoadLayout, x: number, z: number): number {
@@ -39,6 +53,96 @@ function wrappedDelta(value: number, origin: number, span: number): number {
 
 function roadTileSet(layout: RoadLayout): Set<number> {
 	return new Set(layout.roads.map((road) => roadTileKey(layout, road.x, road.z)));
+}
+
+export function buildRoadDecorations(layout: RoadLayout): RoadDecorationData {
+	const roadTiles = roadTileSet(layout);
+	const centerDashes: RoadDecorationRect[] = [];
+	const edgeLines: RoadDecorationRect[] = [];
+	const pavements: RoadDecorationRect[] = [];
+	const crosswalkStripes: RoadDecorationRect[] = [];
+	const origin = -layout.worldSpan / 2;
+	const halfTile = layout.tileSize / 2;
+	const pavementDepth = Math.min(0.8, layout.tileSize * 0.1);
+	const lineThickness = Math.min(0.12, layout.tileSize * 0.015);
+
+	function hasRoad(x: number, z: number): boolean {
+		return roadTiles.has(
+			roadTileKey(
+				layout,
+				wrapGridIndex(x, layout.gridSize),
+				wrapGridIndex(z, layout.gridSize),
+			),
+		);
+	}
+
+	for (const road of layout.roads) {
+		const centerX = origin + (road.x + 0.5) * layout.tileSize;
+		const centerZ = origin + (road.z + 0.5) * layout.tileSize;
+		const west = hasRoad(road.x - 1, road.z);
+		const east = hasRoad(road.x + 1, road.z);
+		const north = hasRoad(road.x, road.z - 1);
+		const south = hasRoad(road.x, road.z + 1);
+		const connectedDirections = [
+			{ connected: west, x: -1, z: 0 },
+			{ connected: east, x: 1, z: 0 },
+			{ connected: north, x: 0, z: -1 },
+			{ connected: south, x: 0, z: 1 },
+		] as const;
+
+		if (west && east && !north && !south) {
+			for (const offset of [-layout.tileSize * 0.22, layout.tileSize * 0.22]) {
+				centerDashes.push({
+					x: centerX + offset,
+					z: centerZ,
+					width: layout.tileSize * 0.28,
+					depth: lineThickness,
+				});
+			}
+		}
+		if (north && south && !west && !east) {
+			for (const offset of [-layout.tileSize * 0.22, layout.tileSize * 0.22]) {
+				centerDashes.push({
+					x: centerX,
+					z: centerZ + offset,
+					width: lineThickness,
+					depth: layout.tileSize * 0.28,
+				});
+			}
+		}
+		if (connectedDirections.filter((direction) => direction.connected).length >= 3) {
+			for (const direction of connectedDirections) {
+				if (!direction.connected) continue;
+				for (let stripe = 0; stripe < 4; stripe += 1) {
+					const distanceFromCenter = halfTile - layout.tileSize * (0.08 + stripe * 0.05);
+					crosswalkStripes.push({
+						x: centerX + direction.x * distanceFromCenter,
+						z: centerZ + direction.z * distanceFromCenter,
+						width: direction.x === 0 ? layout.tileSize * 0.62 : lineThickness * 1.7,
+						depth: direction.z === 0 ? layout.tileSize * 0.62 : lineThickness * 1.7,
+					});
+				}
+			}
+		}
+
+		for (const edge of [
+			{ open: !west, x: centerX - halfTile, z: centerZ, width: lineThickness, depth: layout.tileSize },
+			{ open: !east, x: centerX + halfTile, z: centerZ, width: lineThickness, depth: layout.tileSize },
+			{ open: !north, x: centerX, z: centerZ - halfTile, width: layout.tileSize, depth: lineThickness },
+			{ open: !south, x: centerX, z: centerZ + halfTile, width: layout.tileSize, depth: lineThickness },
+		]) {
+			if (!edge.open) continue;
+			edgeLines.push({ x: edge.x, z: edge.z, width: edge.width, depth: edge.depth });
+			pavements.push({
+				x: edge.x + Math.sign(edge.x - centerX) * pavementDepth / 2,
+				z: edge.z + Math.sign(edge.z - centerZ) * pavementDepth / 2,
+				width: edge.width === lineThickness ? pavementDepth : layout.tileSize,
+				depth: edge.depth === lineThickness ? pavementDepth : layout.tileSize,
+			});
+		}
+	}
+
+	return { centerDashes, edgeLines, pavements, crosswalkStripes };
 }
 
 export function getRoadCornerJoins(layout: RoadLayout): RoadCornerJoin[] {

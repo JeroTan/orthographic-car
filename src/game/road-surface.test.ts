@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildRoadSurface } from './road-surface';
+import { buildRoadDecorations, buildRoadSurface } from './road-surface';
 import { createTerrainIndex, type RoadLayout, type TileCoordinate } from './world';
 
 describe('road surface', () => {
@@ -91,5 +91,50 @@ describe('road surface', () => {
 			joinedTerrain: terrain.surfaceAt(11, -3),
 			farMeadow: terrain.surfaceAt(9, -1),
 		}).toEqual({ joinedGeometry: true, joinedTerrain: 'road', farMeadow: 'meadow' });
+	});
+
+	it('adds dashed center markings, edge lines, and pavement to a straight road', () => {
+		const decorations = buildRoadDecorations(
+			roadLayout(
+				[
+					{ x: 0, z: 1 },
+					{ x: 1, z: 1 },
+					{ x: 2, z: 1 },
+				],
+				3,
+			),
+		);
+
+		expect({
+			centerDashes: decorations.centerDashes.length,
+			edgeLines: decorations.edgeLines.length,
+			pavementSections: decorations.pavements.length,
+			crosswalkStripes: decorations.crosswalkStripes.length,
+		}).toEqual({
+			centerDashes: 6,
+			edgeLines: 6,
+			pavementSections: 6,
+			crosswalkStripes: 0,
+		});
+	});
+
+	it('adds crosswalk stripes around a four-way intersection', () => {
+		const decorations = buildRoadDecorations(
+			roadLayout(
+				[
+					{ x: 2, z: 2 },
+					{ x: 1, z: 2 },
+					{ x: 3, z: 2 },
+					{ x: 2, z: 1 },
+					{ x: 2, z: 3 },
+				],
+				5,
+			),
+		);
+
+		expect({
+			centerDashes: decorations.centerDashes.length,
+			crosswalkStripes: decorations.crosswalkStripes.length,
+		}).toEqual({ centerDashes: 0, crosswalkStripes: 16 });
 	});
 });
