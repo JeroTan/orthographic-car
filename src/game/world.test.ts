@@ -54,7 +54,7 @@ describe('procedural world', () => {
 
 		return {
 			connectedRoads: visited.size,
-			intersections: world.roads.filter((road) => neighbors(road.x, road.z).length === 4).length,
+			junctions: world.roads.filter((road) => neighbors(road.x, road.z).length >= 3).length,
 			simpleTurns: world.roads.filter((road) => {
 				const connected = neighbors(road.x, road.z);
 				if (connected.length !== 2) return false;
@@ -91,40 +91,49 @@ describe('procedural world', () => {
 		expect(secondWorld.props).not.toEqual(firstWorld.props);
 	});
 
-	it('builds a deterministic urban plan from straight roads and simple corners', () => {
-		const world = generateWorld(267);
-		const otherSeed = generateWorld(199081);
-		const topology = roadTopology(world);
-		const roads = new Set(world.roads.map((road) => tileKey(world, road.x, road.z)));
-		const mainCorridorsPresent = Array.from({ length: world.gridSize }, (_, index) => index).every(
-			(index) => roads.has(tileKey(world, index, 9)) && roads.has(tileKey(world, 9, index)),
+	it('builds reproducible seed-dependent urban plans without zigzags or asphalt blobs', () => {
+		const worlds = [1, 2, 3].map((seed) => generateWorld(seed));
+		const signatures = worlds.map((world) =>
+			world.roads
+				.map((road) => tileKey(world, road.x, road.z))
+				.sort((first, second) => first - second)
+				.join(','),
 		);
-		const blockLoopPresent = Array.from({ length: 9 }, (_, offset) => offset + 5).every(
-			(index) =>
-				roads.has(tileKey(world, index, 5)) &&
-				roads.has(tileKey(world, index, 13)) &&
-				roads.has(tileKey(world, 5, index)) &&
-				roads.has(tileKey(world, 13, index)),
-		);
+		const planChecks = worlds.map((world) => {
+			const topology = roadTopology(world);
+			const roads = new Set(world.roads.map((road) => tileKey(world, road.x, road.z)));
+			const mainCorridorsPresent = Array.from(
+				{ length: world.gridSize },
+				(_, index) => index,
+			).every(
+				(index) => roads.has(tileKey(world, index, 9)) && roads.has(tileKey(world, 9, index)),
+			);
+
+			return {
+				connected: topology.connectedRoads === world.roads.length,
+				mainCorridorsPresent,
+				hasReadableJunctions: topology.junctions >= 4,
+				hasOnlyIntentionalTurns: topology.simpleTurns <= 4,
+				hasNoAsphaltBlocks: topology.roadBlocks === 0,
+				roadCountIsBounded: world.roads.length >= 40 && world.roads.length <= 80,
+			};
+		});
 
 		expect({
-			stableAcrossScenerySeeds: otherSeed.roads,
-			roadCount: world.roads.length,
-			allRoadsConnected: topology.connectedRoads === world.roads.length,
-			mainCorridorsPresent,
-			blockLoopPresent,
-			intersections: topology.intersections,
-			simpleTurns: topology.simpleTurns,
-			roadBlocks: topology.roadBlocks,
+			repeatable: generateWorld(1).roads,
+			uniquePlanCount: new Set(signatures).size,
+			planChecks,
 		}).toEqual({
-			stableAcrossScenerySeeds: world.roads,
-			roadCount: 63,
-			allRoadsConnected: true,
-			mainCorridorsPresent: true,
-			blockLoopPresent: true,
-			intersections: 5,
-			simpleTurns: 4,
-			roadBlocks: 0,
+			repeatable: worlds[0].roads,
+			uniquePlanCount: 3,
+			planChecks: Array.from({ length: 3 }, () => ({
+				connected: true,
+				mainCorridorsPresent: true,
+				hasReadableJunctions: true,
+				hasOnlyIntentionalTurns: true,
+				hasNoAsphaltBlocks: true,
+				roadCountIsBounded: true,
+			})),
 		});
 	});
 

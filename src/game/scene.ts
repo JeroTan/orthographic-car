@@ -34,6 +34,7 @@ const MAP_OFFSETS = [-1, 0, 1] as const;
 const CAMERA_HEIGHT = 34;
 const CAMERA_OFFSET = 28;
 const VIEW_HEIGHT = 46;
+const ROAD_TEXTURE_URL = new URL('../assets/roads/RoadTexture2.jpg', import.meta.url).href;
 
 function makeNoiseTexture(
 	base: readonly [number, number, number],
@@ -119,9 +120,14 @@ function repeatedProps(layout: WorldLayout, kind: PropKind): Array<PropPlacement
 	return output;
 }
 
-function addWorld(scene: THREE.Scene, layout: WorldLayout): void {
+function addWorld(scene: THREE.Scene, layout: WorldLayout, onAssetReady: () => void): void {
 	const groundTexture = makeNoiseTexture([111, 148, 91], 26, layout.gridSize * 3);
-	const roadTexture = makeNoiseTexture([72, 76, 78], 18, 1);
+	const roadTexture = new THREE.TextureLoader().load(ROAD_TEXTURE_URL, onAssetReady);
+	roadTexture.colorSpace = THREE.SRGBColorSpace;
+	roadTexture.wrapS = THREE.RepeatWrapping;
+	roadTexture.wrapT = THREE.RepeatWrapping;
+	roadTexture.magFilter = THREE.LinearFilter;
+	roadTexture.minFilter = THREE.LinearMipmapLinearFilter;
 	const groundMaterial = new THREE.MeshLambertMaterial({ map: groundTexture, color: 0xc3d9a5 });
 	const ground = new THREE.Mesh(
 		new THREE.PlaneGeometry(layout.worldSpan * 3, layout.worldSpan * 3),
@@ -168,7 +174,7 @@ function addWorld(scene: THREE.Scene, layout: WorldLayout): void {
 	addInstancedMesh(
 		scene,
 		roadGeometry,
-		new THREE.MeshLambertMaterial({ color: 0xd7dadd, map: roadTexture }),
+		new THREE.MeshBasicMaterial({ color: 0xffffff, map: roadTexture }),
 		repeatedRoadTransforms,
 	);
 	addInstancedMesh(
@@ -297,7 +303,7 @@ export function createGameScene(container: HTMLElement, options: GameSceneOption
 	sun.position.set(-24, 48, -18);
 	scene.add(sun);
 
-	addWorld(scene, layout);
+	addWorld(scene, layout, () => startLoop());
 	const vehicleView = addVehicleView(scene, () => startLoop());
 	let destroyed = false;
 	let lastTime = performance.now();

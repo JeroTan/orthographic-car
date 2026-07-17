@@ -87,21 +87,67 @@ function addVerticalRoad(roadTiles: Set<number>, x: number, startZ: number, endZ
 	for (let z = startZ; z <= endZ; z += 1) addRoadTile(roadTiles, x, z);
 }
 
+function randomInteger(random: () => number, minimum: number, maximum: number): number {
+	return minimum + Math.floor(random() * (maximum - minimum + 1));
+}
+
+function addCollectorLoop(roadTiles: Set<number>, random: () => number): void {
+	const west = randomInteger(random, 3, 5);
+	const east = randomInteger(random, 12, 14);
+	const north = randomInteger(random, 3, 5);
+	const south = randomInteger(random, 12, 14);
+
+	addHorizontalRoad(roadTiles, north, west, east);
+	addHorizontalRoad(roadTiles, south, west, east);
+	addVerticalRoad(roadTiles, west, north, south);
+	addVerticalRoad(roadTiles, east, north, south);
+}
+
+function randomOuterRoad(random: () => number): number {
+	return random() < 0.5 ? randomInteger(random, 3, 6) : randomInteger(random, 11, 14);
+}
+
+function addParallelGrid(roadTiles: Set<number>, random: () => number): void {
+	addHorizontalRoad(roadTiles, randomOuterRoad(random), 0, WORLD_GRID_SIZE - 1);
+	addVerticalRoad(roadTiles, randomOuterRoad(random), 0, WORLD_GRID_SIZE - 1);
+}
+
+function addCornerBlock(roadTiles: Set<number>, outerX: number, outerZ: number): void {
+	const anchor = WORLD_GRID_SIZE / 2;
+	addHorizontalRoad(roadTiles, outerZ, Math.min(outerX, anchor), Math.max(outerX, anchor));
+	addVerticalRoad(roadTiles, outerX, Math.min(outerZ, anchor), Math.max(outerZ, anchor));
+}
+
+function addStaggeredBlocks(roadTiles: Set<number>, random: () => number): void {
+	const west = randomInteger(random, 3, 6);
+	const east = randomInteger(random, 11, 14);
+	const north = randomInteger(random, 3, 6);
+	const south = randomInteger(random, 11, 14);
+
+	if (random() < 0.5) {
+		addCornerBlock(roadTiles, west, north);
+		addCornerBlock(roadTiles, east, south);
+	} else {
+		addCornerBlock(roadTiles, east, north);
+		addCornerBlock(roadTiles, west, south);
+	}
+}
+
 export function generateWorld(seed: number): WorldLayout {
 	const random = createRandom(seed);
+	const roadRandom = createRandom(seed ^ 0x9e3779b9);
 	const roadTiles = new Set<number>();
 	const anchor = WORLD_GRID_SIZE / 2;
-	const blockMinimum = 5;
-	const blockMaximum = 13;
 
-	// Fixed arterials cross map seams cleanly. Inner rectangular collector adds
-	// four readable urban corners and four more intersections without zigzags.
+	// Every family starts from straight seam-wrapping arterials. Seeded grammar
+	// adds only whole orthogonal segments, preventing noisy staircase roads.
 	addHorizontalRoad(roadTiles, anchor, 0, WORLD_GRID_SIZE - 1);
 	addVerticalRoad(roadTiles, anchor, 0, WORLD_GRID_SIZE - 1);
-	addHorizontalRoad(roadTiles, blockMinimum, blockMinimum, blockMaximum);
-	addHorizontalRoad(roadTiles, blockMaximum, blockMinimum, blockMaximum);
-	addVerticalRoad(roadTiles, blockMinimum, blockMinimum, blockMaximum);
-	addVerticalRoad(roadTiles, blockMaximum, blockMinimum, blockMaximum);
+
+	const roadFamily = Math.floor(roadRandom() * 3);
+	if (roadFamily === 0) addCollectorLoop(roadTiles, roadRandom);
+	else if (roadFamily === 1) addParallelGrid(roadTiles, roadRandom);
+	else addStaggeredBlocks(roadTiles, roadRandom);
 
 	const roads = [...roadTiles].map((id) => {
 		return { x: id % WORLD_GRID_SIZE, z: Math.floor(id / WORLD_GRID_SIZE) };
