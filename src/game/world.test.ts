@@ -9,6 +9,63 @@ import {
 } from './world';
 
 describe('procedural world', () => {
+	function tileKey(world: WorldLayout, x: number, z: number): number {
+		const wrappedX = ((x % world.gridSize) + world.gridSize) % world.gridSize;
+		const wrappedZ = ((z % world.gridSize) + world.gridSize) % world.gridSize;
+		return wrappedZ * world.gridSize + wrappedX;
+	}
+
+	function roadTopology(world: WorldLayout) {
+		const roads = new Set(world.roads.map((road) => tileKey(world, road.x, road.z)));
+		const neighbors = (x: number, z: number) =>
+			[
+				[x - 1, z],
+				[x + 1, z],
+				[x, z - 1],
+				[x, z + 1],
+			].filter(([neighborX, neighborZ]) => roads.has(tileKey(world, neighborX, neighborZ)));
+		const visited = new Set<number>();
+		const pending = [world.roads[0]];
+
+		while (pending.length > 0) {
+			const road = pending.pop();
+			if (!road) continue;
+			const key = tileKey(world, road.x, road.z);
+			if (visited.has(key)) continue;
+			visited.add(key);
+			for (const [x, z] of neighbors(road.x, road.z)) pending.push({ x, z });
+		}
+
+		let roadBlocks = 0;
+		for (let z = 0; z < world.gridSize; z += 1) {
+			for (let x = 0; x < world.gridSize; x += 1) {
+				if (
+					[
+						[x, z],
+						[x + 1, z],
+						[x, z + 1],
+						[x + 1, z + 1],
+					].every(([tileX, tileZ]) => roads.has(tileKey(world, tileX, tileZ)))
+				) {
+					roadBlocks += 1;
+				}
+			}
+		}
+
+		return {
+			connectedRoads: visited.size,
+			intersections: world.roads.filter((road) => neighbors(road.x, road.z).length === 4).length,
+			simpleTurns: world.roads.filter((road) => {
+				const connected = neighbors(road.x, road.z);
+				if (connected.length !== 2) return false;
+
+				const [first, second] = connected;
+				return first[0] !== second[0] && first[1] !== second[1];
+			}).length,
+			roadBlocks,
+		};
+	}
+
 	it('creates a small map with roads and scenery', () => {
 		const world = generateWorld(1337);
 
@@ -34,11 +91,41 @@ describe('procedural world', () => {
 		expect(secondWorld.props).not.toEqual(firstWorld.props);
 	});
 
-	it('changes its looping road layout when the seed changes', () => {
-		const firstWorld = generateWorld(1337);
-		const secondWorld = generateWorld(7331);
+	it('builds a deterministic urban plan from straight roads and simple corners', () => {
+		const world = generateWorld(267);
+		const otherSeed = generateWorld(199081);
+		const topology = roadTopology(world);
+		const roads = new Set(world.roads.map((road) => tileKey(world, road.x, road.z)));
+		const mainCorridorsPresent = Array.from({ length: world.gridSize }, (_, index) => index).every(
+			(index) => roads.has(tileKey(world, index, 9)) && roads.has(tileKey(world, 9, index)),
+		);
+		const blockLoopPresent = Array.from({ length: 9 }, (_, offset) => offset + 5).every(
+			(index) =>
+				roads.has(tileKey(world, index, 5)) &&
+				roads.has(tileKey(world, index, 13)) &&
+				roads.has(tileKey(world, 5, index)) &&
+				roads.has(tileKey(world, 13, index)),
+		);
 
-		expect(secondWorld.roads).not.toEqual(firstWorld.roads);
+		expect({
+			stableAcrossScenerySeeds: otherSeed.roads,
+			roadCount: world.roads.length,
+			allRoadsConnected: topology.connectedRoads === world.roads.length,
+			mainCorridorsPresent,
+			blockLoopPresent,
+			intersections: topology.intersections,
+			simpleTurns: topology.simpleTurns,
+			roadBlocks: topology.roadBlocks,
+		}).toEqual({
+			stableAcrossScenerySeeds: world.roads,
+			roadCount: 63,
+			allRoadsConnected: true,
+			mainCorridorsPresent: true,
+			blockLoopPresent: true,
+			intersections: 5,
+			simpleTurns: 4,
+			roadBlocks: 0,
+		});
 	});
 
 	it('includes roadside lamps in the collision world', () => {

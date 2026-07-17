@@ -18,6 +18,8 @@ export interface RoadSurfaceQuery {
 	containsPoint(x: number, z: number): boolean;
 }
 
+const ROAD_CORNER_SEGMENTS = 8;
+
 function roadTileKey(layout: WorldLayout, x: number, z: number): number {
 	return z * layout.gridSize + x;
 }
@@ -43,7 +45,7 @@ export function getRoadCornerJoins(layout: WorldLayout): RoadCornerJoin[] {
 	const roadTiles = roadTileSet(layout);
 	const joins: RoadCornerJoin[] = [];
 	const origin = -layout.worldSpan / 2;
-	const depth = layout.tileSize * 0.35;
+	const depth = layout.tileSize * 0.18;
 
 	for (let gridZ = 0; gridZ < layout.gridSize; gridZ += 1) {
 		for (let gridX = 0; gridX < layout.gridSize; gridX += 1) {
@@ -102,7 +104,11 @@ export function createRoadSurfaceQuery(layout: WorldLayout): RoadSurfaceQuery {
 			return joins.some((join) => {
 				const distanceX = wrappedDelta(wrappedX, join.x, layout.worldSpan) * join.directionX;
 				const distanceZ = wrappedDelta(wrappedZ, join.z, layout.worldSpan) * join.directionZ;
-				return distanceX >= 0 && distanceZ >= 0 && distanceX + distanceZ <= join.depth;
+				return (
+					distanceX >= 0 &&
+					distanceZ >= 0 &&
+					distanceX * distanceX + distanceZ * distanceZ <= join.depth * join.depth
+				);
 			});
 		},
 	};
@@ -155,11 +161,20 @@ export function buildRoadSurface(layout: WorldLayout): RoadSurfaceData {
 	}
 
 	for (const join of getRoadCornerJoins(layout)) {
-		triangle(
-			[join.x, join.z],
-			[join.x + join.directionX * join.depth, join.z],
-			[join.x, join.z + join.directionZ * join.depth],
-		);
+		let previous: readonly [number, number] = [
+			join.x + join.directionX * join.depth,
+			join.z,
+		];
+
+		for (let segment = 1; segment <= ROAD_CORNER_SEGMENTS; segment += 1) {
+			const angle = (segment / ROAD_CORNER_SEGMENTS) * (Math.PI / 2);
+			const next: readonly [number, number] = [
+				join.x + join.directionX * Math.cos(angle) * join.depth,
+				join.z + join.directionZ * Math.sin(angle) * join.depth,
+			];
+			triangle([join.x, join.z], previous, next);
+			previous = next;
+		}
 	}
 
 	return {

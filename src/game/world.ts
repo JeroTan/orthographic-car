@@ -75,24 +75,33 @@ function wrapTile(index: number): number {
 	return ((index % WORLD_GRID_SIZE) + WORLD_GRID_SIZE) % WORLD_GRID_SIZE;
 }
 
+function addRoadTile(roadTiles: Set<number>, x: number, z: number): void {
+	roadTiles.add(tileId(wrapTile(x), wrapTile(z)));
+}
+
+function addHorizontalRoad(roadTiles: Set<number>, z: number, startX: number, endX: number): void {
+	for (let x = startX; x <= endX; x += 1) addRoadTile(roadTiles, x, z);
+}
+
+function addVerticalRoad(roadTiles: Set<number>, x: number, startZ: number, endZ: number): void {
+	for (let z = startZ; z <= endZ; z += 1) addRoadTile(roadTiles, x, z);
+}
+
 export function generateWorld(seed: number): WorldLayout {
 	const random = createRandom(seed);
-	const roadRandom = createRandom(seed ^ 0x9e3779b9);
 	const roadTiles = new Set<number>();
-	const middle = WORLD_GRID_SIZE / 2 - 1;
-	const verticalPhase = roadRandom() * Math.PI * 2;
-	const horizontalPhase = roadRandom() * Math.PI * 2;
+	const anchor = WORLD_GRID_SIZE / 2;
+	const blockMinimum = 5;
+	const blockMaximum = 13;
 
-	for (let index = 0; index < WORLD_GRID_SIZE; index += 1) {
-		const progress = (index / WORLD_GRID_SIZE) * Math.PI * 2;
-		const verticalX = wrapTile(Math.round(middle + Math.sin(progress + verticalPhase) * 2));
-		const horizontalZ = wrapTile(Math.round(middle + Math.sin(progress + horizontalPhase) * 2));
-
-		roadTiles.add(tileId(verticalX, index));
-		roadTiles.add(tileId(wrapTile(verticalX + 1), index));
-		roadTiles.add(tileId(index, horizontalZ));
-		roadTiles.add(tileId(index, wrapTile(horizontalZ + 1)));
-	}
+	// Fixed arterials cross map seams cleanly. Inner rectangular collector adds
+	// four readable urban corners and four more intersections without zigzags.
+	addHorizontalRoad(roadTiles, anchor, 0, WORLD_GRID_SIZE - 1);
+	addVerticalRoad(roadTiles, anchor, 0, WORLD_GRID_SIZE - 1);
+	addHorizontalRoad(roadTiles, blockMinimum, blockMinimum, blockMaximum);
+	addHorizontalRoad(roadTiles, blockMaximum, blockMinimum, blockMaximum);
+	addVerticalRoad(roadTiles, blockMinimum, blockMinimum, blockMaximum);
+	addVerticalRoad(roadTiles, blockMaximum, blockMinimum, blockMaximum);
 
 	const roads = [...roadTiles].map((id) => {
 		return { x: id % WORLD_GRID_SIZE, z: Math.floor(id / WORLD_GRID_SIZE) };

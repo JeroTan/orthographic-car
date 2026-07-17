@@ -50,7 +50,7 @@ describe('road surface', () => {
 		}).toEqual({ vertices: 9, triangles: 8 });
 	});
 
-	it('bridges a three-tile corner with a diagonal road join', () => {
+	it('bridges a three-tile corner with a compact rounded road join', () => {
 		const layout = roadLayout([
 				{ x: 0, z: 0 },
 				{ x: 1, z: 0 },
@@ -63,8 +63,16 @@ describe('road surface', () => {
 		expect({
 			joinedCorner: coversPoint(surface, -1, 1),
 			joinedCornerTerrain: terrain.surfaceAt(-1, 1),
+			wideShoulder: coversPoint(surface, -2, 1.5),
+			wideShoulderTerrain: terrain.surfaceAt(-2, 1.5),
 			emptyMeadow: coversPoint(surface, -3, 3),
-		}).toEqual({ joinedCorner: true, joinedCornerTerrain: 'road', emptyMeadow: false });
+		}).toEqual({
+			joinedCorner: true,
+			joinedCornerTerrain: 'road',
+			wideShoulder: false,
+			wideShoulderTerrain: 'meadow',
+			emptyMeadow: false,
+		});
 	});
 
 	it('bridges three-tile corners across the repeating map seam', () => {
