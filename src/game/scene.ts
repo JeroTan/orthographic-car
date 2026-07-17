@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { buildRoadSurface } from './road-surface';
 import { createVehicleController, type VehicleInput } from './vehicle';
 import { addVehicleView } from './vehicle-view';
+import { DEFAULT_PORSCHE_COLOR, type PorscheColor } from './porsche-colors';
 import {
 	createCollisionIndex,
 	createRoadIndex,
@@ -21,12 +22,14 @@ export interface GameTelemetry {
 
 export interface GameSceneOptions {
 	seed: number;
+	carColor?: PorscheColor;
 	readInput: () => VehicleInput;
 	onTelemetry: (telemetry: GameTelemetry) => void;
 }
 
 export interface GameScene {
 	wake(): void;
+	setCarColor(color: PorscheColor): void;
 	destroy(): void;
 }
 
@@ -304,7 +307,11 @@ export function createGameScene(container: HTMLElement, options: GameSceneOption
 	scene.add(sun);
 
 	addWorld(scene, layout, () => startLoop());
-	const vehicleView = addVehicleView(scene, () => startLoop());
+	const vehicleView = addVehicleView(
+		scene,
+		() => startLoop(),
+		options.carColor ?? DEFAULT_PORSCHE_COLOR,
+	);
 	let destroyed = false;
 	let lastTime = performance.now();
 	let telemetryElapsed = 0;
@@ -380,6 +387,10 @@ export function createGameScene(container: HTMLElement, options: GameSceneOption
 
 	return {
 		wake: startLoop,
+		setCarColor(color) {
+			vehicleView.setColor(color);
+			startLoop();
+		},
 		destroy() {
 			if (destroyed) return;
 			destroyed = true;

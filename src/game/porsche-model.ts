@@ -1,8 +1,16 @@
 import * as THREE from 'three';
 
-import bodyTextureUrl from '../assets/porsche-car-model/porsche-body.webp?url';
+import blackBodyTextureUrl from '../assets/porsche-car-model/porsche-body-07.webp?url';
+import blueBodyTextureUrl from '../assets/porsche-car-model/porsche-body-03.webp?url';
+import burgundyBodyTextureUrl from '../assets/porsche-car-model/porsche-body-05.webp?url';
+import goldBodyTextureUrl from '../assets/porsche-car-model/porsche-body-01.webp?url';
+import greenBodyTextureUrl from '../assets/porsche-car-model/porsche-body-04.webp?url';
+import orangeBodyTextureUrl from '../assets/porsche-car-model/porsche-body-06.webp?url';
 import porscheModelUrl from '../assets/porsche-car-model/porsche-model.bin?url';
+import redBodyTextureUrl from '../assets/porsche-car-model/porsche-body-00.webp?url';
 import runningGearTextureUrl from '../assets/porsche-car-model/porsche-running-gear.webp?url';
+import silverBodyTextureUrl from '../assets/porsche-car-model/porsche-body-02.webp?url';
+import { DEFAULT_PORSCHE_COLOR, type PorscheColor } from './porsche-colors';
 
 export type PorscheWheelPosition = 'frontLeft' | 'frontRight' | 'rearLeft' | 'rearRight';
 
@@ -14,6 +22,7 @@ export interface PorscheWheelVisual {
 export interface PorscheVisualModel {
 	body: THREE.Mesh;
 	wheels: Readonly<Record<PorscheWheelPosition, PorscheWheelVisual>>;
+	setColor(color: PorscheColor): Promise<void>;
 	dispose(): void;
 }
 
@@ -26,6 +35,16 @@ interface PackedMesh {
 const MODEL_SCALE = 1.1;
 const MODEL_RIDE_HEIGHT = 0.75;
 const MODEL_SECTIONS = ['body', 'frontLeft', 'frontRight', 'rearLeft', 'rearRight'] as const;
+const BODY_TEXTURE_URLS: Readonly<Record<PorscheColor, string>> = {
+	silver: silverBodyTextureUrl,
+	red: redBodyTextureUrl,
+	gold: goldBodyTextureUrl,
+	blue: blueBodyTextureUrl,
+	green: greenBodyTextureUrl,
+	burgundy: burgundyBodyTextureUrl,
+	orange: orangeBodyTextureUrl,
+	black: blackBodyTextureUrl,
+};
 
 function configureTexture(texture: THREE.Texture): void {
 	texture.colorSpace = THREE.SRGBColorSpace;
@@ -99,11 +118,13 @@ function positionInCar(mesh: THREE.Object3D, section: PackedMesh): void {
 	mesh.scale.copy(section.halfExtent).multiplyScalar(MODEL_SCALE);
 }
 
-export async function loadPorscheVisualModel(): Promise<PorscheVisualModel> {
+export async function loadPorscheVisualModel(
+	initialColor: PorscheColor = DEFAULT_PORSCHE_COLOR,
+): Promise<PorscheVisualModel> {
 	const textureLoader = new THREE.TextureLoader();
 	const [response, bodyTexture, runningGearTexture] = await Promise.all([
 		fetch(porscheModelUrl),
-		textureLoader.loadAsync(bodyTextureUrl),
+		textureLoader.loadAsync(BODY_TEXTURE_URLS[initialColor]),
 		textureLoader.loadAsync(runningGearTextureUrl),
 	]);
 	if (!response.ok) throw new Error(`Porsche model request failed with ${response.status}.`);
@@ -135,15 +156,38 @@ export async function loadPorscheVisualModel(): Promise<PorscheVisualModel> {
 		rearLeft: makeWheel('rearLeft'),
 		rearRight: makeWheel('rearRight'),
 	};
+	let currentColor = initialColor;
+	let activeBodyTexture = bodyTexture;
+	let colorRequest = 0;
+	let disposed = false;
 
 	return {
 		body,
 		wheels,
+		async setColor(color) {
+			const request = ++colorRequest;
+			if (disposed || color === currentColor) return;
+			const nextTexture = await textureLoader.loadAsync(BODY_TEXTURE_URLS[color]);
+			configureTexture(nextTexture);
+			if (disposed || request !== colorRequest) {
+				nextTexture.dispose();
+				return;
+			}
+
+			const previousTexture = activeBodyTexture;
+			activeBodyTexture = nextTexture;
+			currentColor = color;
+			bodyMaterial.map = nextTexture;
+			bodyMaterial.needsUpdate = true;
+			previousTexture.dispose();
+		},
 		dispose() {
+			disposed = true;
+			colorRequest += 1;
 			for (const section of Object.values(packed)) section.geometry.dispose();
 			bodyMaterial.dispose();
 			wheelMaterial.dispose();
-			bodyTexture.dispose();
+			activeBodyTexture.dispose();
 			runningGearTexture.dispose();
 		},
 	};

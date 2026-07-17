@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 
 import type { PorscheVisualModel, PorscheWheelVisual } from './porsche-model';
+import { DEFAULT_PORSCHE_COLOR, type PorscheColor } from './porsche-colors';
 import type { VehicleState } from './vehicle';
 
 interface WheelAxle {
@@ -361,21 +362,30 @@ function addTireEffects(scene: THREE.Scene): TireEffects {
 
 export interface VehicleView {
 	update(deltaSeconds: number, state: VehicleState): boolean;
+	setColor(color: PorscheColor): void;
 	destroy(): void;
 }
 
-export function addVehicleView(scene: THREE.Scene, onModelReady: () => void): VehicleView {
+export function addVehicleView(
+	scene: THREE.Scene,
+	onModelReady: () => void,
+	initialColor: PorscheColor = DEFAULT_PORSCHE_COLOR,
+): VehicleView {
 	const car = addCar(scene);
 	const tireEffects = addTireEffects(scene);
 	let destroyed = false;
+	let selectedColor = initialColor;
+	let porscheModel: PorscheVisualModel | undefined;
 	void import('./porsche-model')
-		.then(({ loadPorscheVisualModel }) => loadPorscheVisualModel())
-		.then((model) => {
+		.then(({ loadPorscheVisualModel }) => loadPorscheVisualModel(selectedColor))
+		.then(async (model) => {
 			if (destroyed) {
 				model.dispose();
 				return;
 			}
 			attachPorscheModel(car, model);
+			porscheModel = model;
+			await model.setColor(selectedColor);
 			onModelReady();
 		})
 		.catch((error: unknown) => {
@@ -430,8 +440,15 @@ export function addVehicleView(scene: THREE.Scene, onModelReady: () => void): Ve
 		const effectsActive = tireEffects.update(delta, state);
 		return effectsActive;
 		},
+		setColor(color) {
+			selectedColor = color;
+			void porscheModel?.setColor(color).then(onModelReady).catch((error: unknown) => {
+				console.warn('Porsche color could not load.', error);
+			});
+		},
 		destroy() {
 			destroyed = true;
+			porscheModel?.dispose();
 		},
 	};
 }

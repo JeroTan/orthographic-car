@@ -2,6 +2,11 @@
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
 
 import type { GameScene } from '../game/scene';
+import {
+	DEFAULT_PORSCHE_COLOR,
+	PORSCHE_COLORS,
+	type PorscheColor,
+} from '../game/porsche-colors';
 import { toSpeedometerKmh, type VehicleInput } from '../game/vehicle';
 
 type Control = keyof VehicleInput;
@@ -12,6 +17,7 @@ const surface = ref<'road' | 'meadow'>('meadow');
 const drawCalls = ref(0);
 const seed = ref(2607);
 const loadError = ref('');
+const carColor = ref<PorscheColor>(DEFAULT_PORSCHE_COLOR);
 const controls = reactive<VehicleInput>({
 	accelerate: false,
 	brake: false,
@@ -85,6 +91,7 @@ async function startGame(): Promise<void> {
 		if (token !== startToken || !gameHost.value) return;
 		game = createGameScene(gameHost.value, {
 			seed: seed.value,
+			carColor: carColor.value,
 			readInput: () => controls,
 			onTelemetry(telemetry) {
 				speed.value = telemetry.speed;
@@ -95,6 +102,11 @@ async function startGame(): Promise<void> {
 	} catch (error) {
 		loadError.value = error instanceof Error ? error.message : 'WebGL could not start on this browser.';
 	}
+}
+
+function setCarColor(color: PorscheColor): void {
+	carColor.value = color;
+	game?.setCarColor(color);
 }
 
 function generateNewWorld(): void {
@@ -149,19 +161,40 @@ onUnmounted(() => {
 			</div>
 		</header>
 
-		<section class="status-panel" aria-label="Driving status">
-			<div class="speed-readout">
-				<strong>{{ displaySpeed }}</strong>
-				<span>km/h</span>
-			</div>
-			<div class="status-copy">
-				<span>Now crossing</span>
-				<strong>{{ surfaceLabel }}</strong>
-			</div>
-			<div class="eco-chip" :title="`${drawCalls} scene draw calls`">
-				<i /> Eco renderer
-			</div>
-		</section>
+		<div class="status-cluster">
+			<section class="color-panel" aria-label="Porsche color">
+				<span>Car color</span>
+				<div class="color-options">
+					<button
+						v-for="color in PORSCHE_COLORS"
+						:key="color.id"
+						type="button"
+						class="color-choice"
+						:class="{ active: carColor === color.id }"
+						:style="{ '--car-swatch': color.swatch }"
+						:aria-label="color.label"
+						:aria-pressed="carColor === color.id"
+						:title="color.label"
+						@click="setCarColor(color.id)"
+					/>
+				</div>
+				<strong>{{ PORSCHE_COLORS.find((color) => color.id === carColor)?.label }}</strong>
+			</section>
+
+			<section class="status-panel" aria-label="Driving status">
+				<div class="speed-readout">
+					<strong>{{ displaySpeed }}</strong>
+					<span>km/h</span>
+				</div>
+				<div class="status-copy">
+					<span>Now crossing</span>
+					<strong>{{ surfaceLabel }}</strong>
+				</div>
+				<div class="eco-chip" :title="`${drawCalls} scene draw calls`">
+					<i /> Eco renderer
+				</div>
+			</section>
+		</div>
 
 		<section class="controls-panel" aria-label="Driving controls">
 			<div class="controls-copy">
@@ -230,6 +263,7 @@ onUnmounted(() => {
 
 .brand-panel,
 .world-panel,
+.color-panel,
 .status-panel,
 .controls-panel {
 	border: 1px solid rgb(255 255 255 / 55%);
@@ -331,10 +365,63 @@ h1 {
 	outline-offset: 3px;
 }
 
-.status-panel {
+.status-cluster {
 	position: absolute;
 	left: clamp(1rem, 3vw, 2.25rem);
 	bottom: clamp(1rem, 3vw, 2rem);
+	display: grid;
+	justify-items: start;
+	gap: 0.45rem;
+}
+
+.color-panel {
+	display: flex;
+	align-items: center;
+	gap: 0.55rem;
+	padding: 0.48rem 0.65rem;
+	border-radius: 0.8rem 0.8rem 0.8rem 0.25rem;
+}
+
+.color-panel > span {
+	font-size: 0.58rem;
+	font-weight: 800;
+	letter-spacing: 0.12em;
+	text-transform: uppercase;
+	color: #6a755f;
+}
+
+.color-panel > strong {
+	min-width: 3.2rem;
+	font-size: 0.65rem;
+	color: #3d4c41;
+}
+
+.color-options {
+	display: flex;
+	gap: 0.3rem;
+}
+
+.color-choice {
+	width: 1rem;
+	height: 1rem;
+	padding: 0;
+	border: 2px solid #fffdf4;
+	border-radius: 50%;
+	background: var(--car-swatch);
+	box-shadow: 0 0 0 1px #bcb9aa;
+	cursor: pointer;
+}
+
+.color-choice.active {
+	box-shadow: 0 0 0 2px #385742;
+}
+
+.color-choice:focus-visible {
+	outline: 3px solid #f19164;
+	outline-offset: 3px;
+}
+
+.status-panel {
 	display: flex;
 	align-items: center;
 	gap: 1rem;
@@ -519,7 +606,12 @@ h1 {
 	.world-panel .world-label { display: none; }
 	.world-panel button { width: 2.35rem; height: 2.35rem; padding: 0; justify-content: center; }
 	.world-panel .button-label { display: none; }
-	.status-panel { bottom: 1rem; padding: 0.65rem 0.75rem; }
+	.status-cluster { bottom: 1rem; }
+	.color-panel { padding: 0.42rem 0.55rem; }
+	.color-panel > span,
+	.color-panel > strong { display: none; }
+	.color-choice { width: 1.15rem; height: 1.15rem; }
+	.status-panel { padding: 0.65rem 0.75rem; }
 	.status-copy { display: none; }
 	.speed-readout { min-width: 0; padding-right: 0; border-right: 0; }
 	.controls-panel { bottom: 1rem; padding: 0.6rem; }
