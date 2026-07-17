@@ -11,6 +11,7 @@ describe('road surface', () => {
 			worldSpan: gridSize * 8,
 			roads,
 			props: [],
+			grass: [],
 		};
 	}
 

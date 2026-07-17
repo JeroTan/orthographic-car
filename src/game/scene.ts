@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 
+import { addGrassView } from './grass-view';
 import { buildRoadSurface } from './road-surface';
 import { createVehicleController, type VehicleInput } from './vehicle';
 import { addVehicleView } from './vehicle-view';
@@ -37,6 +38,7 @@ const MAP_OFFSETS = [-1, 0, 1] as const;
 const CAMERA_HEIGHT = 34;
 const CAMERA_OFFSET = 28;
 const VIEW_HEIGHT = 46;
+const IDLE_FRAME_INTERVAL_MS = 50;
 const ROAD_TEXTURE_URL = new URL('../assets/roads/RoadTexture2.jpg', import.meta.url).href;
 
 function makeNoiseTexture(
@@ -307,6 +309,7 @@ export function createGameScene(container: HTMLElement, options: GameSceneOption
 	scene.add(sun);
 
 	addWorld(scene, layout, () => startLoop());
+	const grassView = addGrassView(scene, layout, () => startLoop());
 	const vehicleView = addVehicleView(
 		scene,
 		() => startLoop(),
@@ -337,13 +340,16 @@ export function createGameScene(container: HTMLElement, options: GameSceneOption
 
 	function frame(now: number): void {
 		if (destroyed) return;
+		const input = options.readInput();
+		const hasInput = input.accelerate || input.brake || input.left || input.right || input.handbrake;
+		if (idleElapsed >= 0.25 && !hasInput && now - lastTime < IDLE_FRAME_INTERVAL_MS) return;
 		const delta = Math.min((now - lastTime) / 1000, 0.05);
 		lastTime = now;
 
-		const input = options.readInput();
 		controller.step(delta, input);
 		const { state } = controller;
 		const effectsActive = vehicleView.update(delta, state);
+		grassView.update(now / 1000, state.x, state.z);
 
 		camera.position.set(state.x + CAMERA_OFFSET, CAMERA_HEIGHT, state.z - CAMERA_OFFSET);
 		camera.lookAt(state.x, 0, state.z);
@@ -359,9 +365,7 @@ export function createGameScene(container: HTMLElement, options: GameSceneOption
 			});
 		}
 
-		const hasInput = input.accelerate || input.brake || input.left || input.right || input.handbrake;
 		idleElapsed = state.speed === 0 && !hasInput && !effectsActive ? idleElapsed + delta : 0;
-		if (idleElapsed >= 0.25) stopLoop();
 	}
 
 	function startLoop(): void {
@@ -396,6 +400,7 @@ export function createGameScene(container: HTMLElement, options: GameSceneOption
 			destroyed = true;
 			stopLoop();
 			vehicleView.destroy();
+			grassView.destroy();
 			document.removeEventListener('visibilitychange', handleVisibilityChange);
 			resizeObserver.disconnect();
 			disposeScene(scene);

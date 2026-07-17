@@ -30,6 +30,7 @@ export interface CollisionQuery {
 
 export interface TerrainQuery {
 	surfaceAt(x: number, z: number): 'road' | 'meadow';
+	grassDensityAt?(x: number, z: number): number;
 }
 
 interface VehicleConfig {
@@ -47,6 +48,8 @@ const COAST_DRAG = 2.4;
 const MAX_SPEED = 26;
 const MAX_MEADOW_SPEED = 14;
 const MEADOW_OVERSPEED_DRAG = 8;
+const GRASS_ROLLING_DRAG = 1.1;
+const GRASS_SPEED_DRAG = 0.12;
 const MAX_REVERSE_SPEED = 12;
 const MAX_MEADOW_REVERSE_SPEED = 7;
 const STEERING_RATE = 1.8;
@@ -223,6 +226,16 @@ export function createVehicleController(config: VehicleConfig): VehicleControlle
 			const handling = SURFACE_HANDLING[surface];
 			state.speed = updateLongitudinalSpeed(state.speed, deltaSeconds, input, handling);
 			updateSteering(state, deltaSeconds, input, handling);
+			const grassDensity = Math.max(
+				0,
+				Math.min(1, config.terrain?.grassDensityAt?.(state.x, state.z) ?? 0),
+			);
+			state.speed = coastTowardStop(
+				state.speed,
+				grassDensity *
+					(GRASS_ROLLING_DRAG + Math.abs(state.speed) * GRASS_SPEED_DRAG) *
+					deltaSeconds,
+			);
 
 			const forwardX = Math.sin(state.heading);
 			const forwardZ = Math.cos(state.heading);

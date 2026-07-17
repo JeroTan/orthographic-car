@@ -19,17 +19,30 @@ export interface PropPlacement {
 	scale: number;
 }
 
+export type GrassKind = 'field' | 'wild';
+
+export interface GrassPlacement {
+	kind: GrassKind;
+	x: number;
+	z: number;
+	rotation: number;
+	scale: number;
+	phase: number;
+}
+
 export interface WorldLayout {
 	gridSize: number;
 	tileSize: number;
 	worldSpan: number;
 	roads: TileCoordinate[];
 	props: PropPlacement[];
+	grass: GrassPlacement[];
 }
 
 export interface RoadIndex {
 	hasWorldPosition(x: number, z: number): boolean;
 	surfaceAt(x: number, z: number): 'road' | 'meadow';
+	grassDensityAt(x: number, z: number): number;
 }
 
 export interface CollisionIndex {
@@ -152,6 +165,35 @@ export function generateWorld(seed: number): WorldLayout {
 	const roads = [...roadTiles].map((id) => {
 		return { x: id % WORLD_GRID_SIZE, z: Math.floor(id / WORLD_GRID_SIZE) };
 	});
+	const grassRandom = createRandom(seed ^ 0x7f4a7c15);
+	const grass: GrassPlacement[] = [];
+	const roadSurface = createRoadSurfaceQuery({
+		gridSize: WORLD_GRID_SIZE,
+		tileSize: WORLD_TILE_SIZE,
+		worldSpan: WORLD_SPAN,
+		roads,
+		props: [],
+		grass: [],
+	});
+	for (let z = 0; z < WORLD_GRID_SIZE; z += 1) {
+		for (let x = 0; x < WORLD_GRID_SIZE; x += 1) {
+			if (roadTiles.has(tileId(x, z))) continue;
+
+			for (let patch = 0; patch < 3; patch += 1) {
+				const grassX = tileToWorld(x) + (grassRandom() - 0.5) * WORLD_TILE_SIZE * 0.84;
+				const grassZ = tileToWorld(z) + (grassRandom() - 0.5) * WORLD_TILE_SIZE * 0.84;
+				if (roadSurface.containsPoint(grassX, grassZ)) continue;
+				grass.push({
+					kind: grassRandom() < 0.14 ? 'wild' : 'field',
+					x: grassX,
+					z: grassZ,
+					rotation: grassRandom() * Math.PI * 2,
+					scale: 0.72 + grassRandom() * 0.58,
+					phase: grassRandom() * Math.PI * 2,
+				});
+			}
+		}
+	}
 	const props: PropPlacement[] = [];
 
 	for (let z = 0; z < WORLD_GRID_SIZE; z += 1) {
@@ -189,6 +231,7 @@ export function generateWorld(seed: number): WorldLayout {
 		worldSpan: WORLD_SPAN,
 		roads,
 		props,
+		grass,
 	};
 }
 
@@ -200,6 +243,9 @@ export function createRoadIndex(layout: WorldLayout): RoadIndex {
 		hasWorldPosition,
 		surfaceAt(x, z) {
 			return hasWorldPosition(x, z) ? 'road' : 'meadow';
+		},
+		grassDensityAt(x, z) {
+			return !hasWorldPosition(x, z) && layout.grass.length > 0 ? 0.85 : 0;
 		},
 	};
 }

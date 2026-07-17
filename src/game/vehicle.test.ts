@@ -66,6 +66,7 @@ describe('vehicle controller', () => {
 			worldSpan: 144,
 			roads: [],
 			props: [{ kind: 'tree', x: 0, z: 6, rotation: 0, scale: 1 }],
+			grass: [],
 		};
 		const vehicle = createVehicleController({
 			worldSpan: world.worldSpan,
@@ -86,6 +87,7 @@ describe('vehicle controller', () => {
 			worldSpan: 144,
 			roads: Array.from({ length: 18 }, (_, z) => ({ x: 9, z })),
 			props: [],
+			grass: [],
 		};
 		const road = createVehicleController({
 			worldSpan: roadWorld.worldSpan,
@@ -112,6 +114,7 @@ describe('vehicle controller', () => {
 			worldSpan: 144,
 			roads: Array.from({ length: 18 }, (_, z) => ({ x: 9, z })),
 			props: [],
+			grass: [],
 		};
 		const road = createVehicleController({
 			worldSpan: roadWorld.worldSpan,
@@ -132,6 +135,33 @@ describe('vehicle controller', () => {
 		expect(meadow.state.speed).toBeCloseTo(6, 6);
 	});
 
+	it('pushes through dense grass while losing speed gradually', () => {
+		const bareMeadow = createVehicleController({
+			worldSpan: 144,
+			terrain: {
+				surfaceAt: () => 'meadow',
+				grassDensityAt: () => 0,
+			},
+		});
+		const denseGrass = createVehicleController({
+			worldSpan: 144,
+			terrain: {
+				surfaceAt: () => 'meadow',
+				grassDensityAt: () => 1,
+			},
+		});
+		const input = { accelerate: true, brake: false, left: false, right: false };
+
+		for (let frame = 0; frame < 40; frame += 1) {
+			bareMeadow.step(0.05, input);
+			denseGrass.step(0.05, input);
+		}
+
+		expect(denseGrass.state.speed).toBeGreaterThan(0);
+		expect(denseGrass.state.z).toBeGreaterThan(0);
+		expect(denseGrass.state.speed).toBeLessThan(bareMeadow.state.speed - 1);
+	});
+
 	it('reverses more slowly on meadow than on road', () => {
 		const roadWorld: WorldLayout = {
 			gridSize: 18,
@@ -139,6 +169,7 @@ describe('vehicle controller', () => {
 			worldSpan: 144,
 			roads: Array.from({ length: 18 }, (_, z) => ({ x: 9, z })),
 			props: [],
+			grass: [],
 		};
 		const road = createVehicleController({
 			worldSpan: roadWorld.worldSpan,
@@ -165,6 +196,7 @@ describe('vehicle controller', () => {
 			worldSpan: 144,
 			roads: [9, 10, 11].map((z) => ({ x: 9, z })),
 			props: [],
+			grass: [],
 		};
 		const vehicle = createVehicleController({
 			worldSpan: world.worldSpan,

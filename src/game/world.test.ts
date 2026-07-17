@@ -91,6 +91,17 @@ describe('procedural world', () => {
 		expect(secondWorld.props).not.toEqual(firstWorld.props);
 	});
 
+	it('fills meadow with deterministic grass while keeping asphalt clear', () => {
+		const world = generateWorld(1337);
+		const roadIndex = createRoadIndex(world);
+
+		expect(world.grass.length).toBeGreaterThan(500);
+		expect(generateWorld(1337).grass).toEqual(world.grass);
+		expect(
+			world.grass.every((patch) => !roadIndex.hasWorldPosition(patch.x, patch.z)),
+		).toBe(true);
+	});
+
 	it('builds reproducible seed-dependent urban plans without zigzags or asphalt blobs', () => {
 		const worlds = [1, 2, 3].map((seed) => generateWorld(seed));
 		const signatures = worlds.map((world) =>
@@ -144,6 +155,7 @@ describe('procedural world', () => {
 			worldSpan: 144,
 			roads: [{ x: 9, z: 9 }],
 			props: [],
+			grass: [],
 		};
 
 		expect(createCollisionIndex(world).intersectsCircle(8.5, 4, 0.5)).toBe(true);
@@ -156,6 +168,7 @@ describe('procedural world', () => {
 			worldSpan: 144,
 			roads: [{ x: 9, z: 9 }],
 			props: [],
+			grass: [],
 		};
 		const roadIndex = createRoadIndex(world);
 		const posts = getRoadsidePosts(world);
