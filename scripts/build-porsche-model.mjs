@@ -10,10 +10,10 @@ const rootDirectory = fileURLToPath(new URL('..', import.meta.url));
 const sourceUrl = new URL('../src/assets/porsche-car-model/Porsche_911_GT2.obj', import.meta.url);
 const outputUrl = new URL('../src/assets/porsche-car-model/porsche-model.bin', import.meta.url);
 const wheelParts = {
-	'part 025': 'frontLeft',
-	'part 028': 'frontRight',
-	'part 026': 'rearLeft',
-	'part 027': 'rearRight',
+	'part 027': 'frontLeft',
+	'part 026': 'frontRight',
+	'part 028': 'rearLeft',
+	'part 025': 'rearRight',
 };
 const sectionOrder = ['body', 'frontLeft', 'frontRight', 'rearLeft', 'rearRight'];
 const headerSize = 8 + sectionOrder.length * 40;
@@ -24,6 +24,13 @@ function align(value, alignment) {
 
 function quantizeSigned(value, maximum) {
 	return Math.round(Math.max(-1, Math.min(1, value)) * maximum);
+}
+
+function orientToGameForward(geometry) {
+	const oriented = geometry.clone();
+	// Supplied OBJ points toward -Z; vehicle physics defines forward as +Z.
+	oriented.rotateY(Math.PI);
+	return oriented;
 }
 
 function packGeometry(geometry) {
@@ -85,11 +92,11 @@ for (const child of root.children) {
 const bodyGeometry = mergeGeometries(bodyGeometries, false);
 if (!bodyGeometry) throw new Error('Porsche body geometry could not be merged.');
 const sections = {
-	body: packGeometry(bodyGeometry),
-	frontLeft: packGeometry(wheelGeometries.frontLeft),
-	frontRight: packGeometry(wheelGeometries.frontRight),
-	rearLeft: packGeometry(wheelGeometries.rearLeft),
-	rearRight: packGeometry(wheelGeometries.rearRight),
+	body: packGeometry(orientToGameForward(bodyGeometry)),
+	frontLeft: packGeometry(orientToGameForward(wheelGeometries.frontLeft)),
+	frontRight: packGeometry(orientToGameForward(wheelGeometries.frontRight)),
+	rearLeft: packGeometry(orientToGameForward(wheelGeometries.rearLeft)),
+	rearRight: packGeometry(orientToGameForward(wheelGeometries.rearRight)),
 };
 
 let dataOffset = headerSize;
