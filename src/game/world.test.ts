@@ -172,10 +172,19 @@ describe('procedural world', () => {
 			minimumSpacing: expect.any(Number),
 			allNearRoads: true,
 		});
-		expect(world.buildings.length).toBeGreaterThanOrEqual(6);
-		expect(world.buildings.length).toBeLessThanOrEqual(18);
+		expect(world.buildings.length).toBeGreaterThanOrEqual(18);
+		expect(world.buildings.length).toBeLessThanOrEqual(28);
 		expect(new Set(world.buildings.map((building) => building.variant)).size).toBeGreaterThanOrEqual(4);
-		expect(Math.min(...distances)).toBeGreaterThanOrEqual(10);
+		expect(Math.min(...distances)).toBeGreaterThanOrEqual(6.5);
+		expect(Math.min(...distances)).toBeLessThan(9);
+	});
+
+	it('keeps different generated plans densely built', () => {
+		const buildingCounts = [1, 2, 3, 1337, 2607].map(
+			(seed) => generateWorld(seed).buildings.length,
+		);
+
+		expect(buildingCounts.every((count) => count >= 18 && count <= 28)).toBe(true);
 	});
 
 	it('builds reproducible seed-dependent urban plans without zigzags or asphalt blobs', () => {

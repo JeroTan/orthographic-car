@@ -182,7 +182,7 @@ function isNearBuilding(
 
 function generateBuildings(roadTiles: ReadonlySet<number>, seed: number): BuildingPlacement[] {
 	const random = createRandom(seed ^ 0x51ed270b);
-	const spacing = [10, 14, 18][Math.floor(random() * 3)];
+	const spacing = [6.5, 7, 7.5][Math.floor(random() * 3)];
 	const variantOffset = Math.floor(random() * 6);
 	const buildings: BuildingPlacement[] = [];
 	const candidates: Array<BuildingPlacement & { roll: number }> = [];
@@ -213,7 +213,7 @@ function generateBuildings(roadTiles: ReadonlySet<number>, seed: number): Buildi
 	}
 
 	function place(candidate: BuildingPlacement & { roll: number }): void {
-		if (buildings.length >= 16 || isNearBuilding(buildings, candidate, spacing)) return;
+		if (buildings.length >= 28 || isNearBuilding(buildings, candidate, spacing)) return;
 		buildings.push({
 			variant: ((variantOffset + buildings.length) % 6) as BuildingVariant,
 			x: candidate.x,
@@ -224,9 +224,9 @@ function generateBuildings(roadTiles: ReadonlySet<number>, seed: number): Buildi
 	}
 
 	for (const candidate of candidates) {
-		if (candidate.roll < 0.58) place(candidate);
+		if (candidate.roll < 0.78) place(candidate);
 	}
-	if (buildings.length < 6) {
+	if (buildings.length < 18) {
 		for (const candidate of candidates) place(candidate);
 	}
 	return buildings;
