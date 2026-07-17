@@ -137,4 +137,28 @@ describe('road surface', () => {
 			crosswalkStripes: decorations.crosswalkStripes.length,
 		}).toEqual({ centerDashes: 0, crosswalkStripes: 16 });
 	});
+
+	it('follows rounded road joins with curved edge markings and pavement', () => {
+		const decorations = buildRoadDecorations(
+			roadLayout(
+				[
+					{ x: 1, z: 1 },
+					{ x: 2, z: 1 },
+					{ x: 2, z: 2 },
+				],
+				3,
+			),
+		);
+		const isCurvedSegment = (rotation = 0) =>
+			Math.abs(Math.sin(rotation * 2)) > 0.01;
+
+		expect({
+			curvedEdgeSegments: decorations.edgeLines.filter((line) =>
+				isCurvedSegment(line.rotation),
+			).length,
+			curvedPavementSegments: decorations.pavements.filter((pavement) =>
+				isCurvedSegment(pavement.rotation),
+			).length,
+		}).toEqual({ curvedEdgeSegments: 6, curvedPavementSegments: 6 });
+	});
 });

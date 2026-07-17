@@ -141,7 +141,7 @@ function repeatedDecorationTransforms(
 						rectangle.x + mapX * layout.worldSpan,
 						y,
 						rectangle.z + mapZ * layout.worldSpan,
-						0,
+						rectangle.rotation ?? 0,
 						rectangle.width,
 						height,
 						rectangle.depth,

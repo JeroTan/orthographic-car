@@ -23,6 +23,7 @@ export interface RoadDecorationRect {
 	z: number;
 	width: number;
 	depth: number;
+	rotation?: number;
 }
 
 export interface RoadDecorationData {
@@ -76,6 +77,21 @@ export function buildRoadDecorations(layout: RoadLayout): RoadDecorationData {
 		);
 	}
 
+	function addStraightCenterDashes(
+		centerX: number,
+		centerZ: number,
+		orientation: 'horizontal' | 'vertical',
+	): void {
+		for (const offset of [-layout.tileSize * 0.22, layout.tileSize * 0.22]) {
+			centerDashes.push({
+				x: centerX + (orientation === 'horizontal' ? offset : 0),
+				z: centerZ + (orientation === 'vertical' ? offset : 0),
+				width: orientation === 'horizontal' ? layout.tileSize * 0.28 : lineThickness,
+				depth: orientation === 'vertical' ? layout.tileSize * 0.28 : lineThickness,
+			});
+		}
+	}
+
 	for (const road of layout.roads) {
 		const centerX = origin + (road.x + 0.5) * layout.tileSize;
 		const centerZ = origin + (road.z + 0.5) * layout.tileSize;
@@ -91,24 +107,10 @@ export function buildRoadDecorations(layout: RoadLayout): RoadDecorationData {
 		] as const;
 
 		if (west && east && !north && !south) {
-			for (const offset of [-layout.tileSize * 0.22, layout.tileSize * 0.22]) {
-				centerDashes.push({
-					x: centerX + offset,
-					z: centerZ,
-					width: layout.tileSize * 0.28,
-					depth: lineThickness,
-				});
-			}
+			addStraightCenterDashes(centerX, centerZ, 'horizontal');
 		}
 		if (north && south && !west && !east) {
-			for (const offset of [-layout.tileSize * 0.22, layout.tileSize * 0.22]) {
-				centerDashes.push({
-					x: centerX,
-					z: centerZ + offset,
-					width: lineThickness,
-					depth: layout.tileSize * 0.28,
-				});
-			}
+			addStraightCenterDashes(centerX, centerZ, 'vertical');
 		}
 		if (connectedDirections.filter((direction) => direction.connected).length >= 3) {
 			for (const direction of connectedDirections) {
@@ -138,6 +140,75 @@ export function buildRoadDecorations(layout: RoadLayout): RoadDecorationData {
 				z: edge.z + Math.sign(edge.z - centerZ) * pavementDepth / 2,
 				width: edge.width === lineThickness ? pavementDepth : layout.tileSize,
 				depth: edge.depth === lineThickness ? pavementDepth : layout.tileSize,
+			});
+		}
+	}
+
+	const straightBoundaryCount = edgeLines.length;
+	const cornerJoins = getRoadCornerJoins(layout);
+	const epsilon = 0.001;
+	for (const join of cornerJoins) {
+		const verticalBoundary = edgeLines.findIndex((edge, index) => {
+			if (index >= straightBoundaryCount || edge.width !== lineThickness) return false;
+			const pavement = pavements[index];
+			const endpointZ = edge.z - join.directionZ * edge.depth / 2;
+			return (
+				Math.abs(edge.x - join.x) < epsilon &&
+				Math.abs(endpointZ - join.z) < epsilon &&
+				Math.sign(pavement.x - edge.x) === join.directionX
+			);
+		});
+		if (verticalBoundary >= 0) {
+			edgeLines[verticalBoundary].z += join.directionZ * join.depth / 2;
+			edgeLines[verticalBoundary].depth -= join.depth;
+			pavements[verticalBoundary].z += join.directionZ * join.depth / 2;
+			pavements[verticalBoundary].depth -= join.depth;
+		}
+
+		const horizontalBoundary = edgeLines.findIndex((edge, index) => {
+			if (index >= straightBoundaryCount || edge.depth !== lineThickness) return false;
+			const pavement = pavements[index];
+			const endpointX = edge.x - join.directionX * edge.width / 2;
+			return (
+				Math.abs(edge.z - join.z) < epsilon &&
+				Math.abs(endpointX - join.x) < epsilon &&
+				Math.sign(pavement.z - edge.z) === join.directionZ
+			);
+		});
+		if (horizontalBoundary >= 0) {
+			edgeLines[horizontalBoundary].x += join.directionX * join.depth / 2;
+			edgeLines[horizontalBoundary].width -= join.depth;
+			pavements[horizontalBoundary].x += join.directionX * join.depth / 2;
+			pavements[horizontalBoundary].width -= join.depth;
+		}
+	}
+
+	const curvedBoundarySegments = 6;
+	for (const join of cornerJoins) {
+		for (let segment = 0; segment < curvedBoundarySegments; segment += 1) {
+			const startAngle = (segment / curvedBoundarySegments) * (Math.PI / 2);
+			const endAngle = ((segment + 1) / curvedBoundarySegments) * (Math.PI / 2);
+			const angle = (startAngle + endAngle) / 2;
+			const tangentX = -join.directionX * Math.sin(angle);
+			const tangentZ = join.directionZ * Math.cos(angle);
+			const rotation = Math.atan2(-tangentZ, tangentX);
+			const lineLength = 2 * join.depth * Math.sin((endAngle - startAngle) / 2) + lineThickness;
+			const pavementRadius = join.depth + pavementDepth / 2;
+			const pavementLength =
+				2 * pavementRadius * Math.sin((endAngle - startAngle) / 2) + lineThickness;
+			edgeLines.push({
+				x: join.x + join.directionX * Math.cos(angle) * join.depth,
+				z: join.z + join.directionZ * Math.sin(angle) * join.depth,
+				width: lineLength,
+				depth: lineThickness,
+				rotation,
+			});
+			pavements.push({
+				x: join.x + join.directionX * Math.cos(angle) * pavementRadius,
+				z: join.z + join.directionZ * Math.sin(angle) * pavementRadius,
+				width: pavementLength,
+				depth: pavementDepth,
+				rotation,
 			});
 		}
 	}
