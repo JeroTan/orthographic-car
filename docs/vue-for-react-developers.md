@@ -79,6 +79,7 @@ const controls = reactive({
   brake: false,
   left: false,
   right: false,
+  handbrake: false,
 });
 
 controls.accelerate = true;

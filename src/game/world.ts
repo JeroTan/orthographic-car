@@ -27,6 +27,26 @@ export interface WorldLayout {
 
 export interface RoadIndex {
 	hasWorldPosition(x: number, z: number): boolean;
+	surfaceAt(x: number, z: number): 'road' | 'meadow';
+}
+
+export interface CollisionIndex {
+	intersectsCircle(x: number, z: number, radius: number): boolean;
+}
+
+function wrappedDistance(a: number, b: number, span: number) {
+	const direct = Math.abs(a - b) % span;
+	return Math.min(direct, span - direct);
+}
+
+function wrapWorldCoordinate(value: number, span: number) {
+	const halfSpan = span / 2;
+	return ((((value + halfSpan) % span) + span) % span) - halfSpan;
+}
+
+export interface WorldPoint {
+	x: number;
+	z: number;
 }
 
 function createRandom(seed: number): () => number {
@@ -117,12 +137,78 @@ export function generateWorld(seed: number): WorldLayout {
 
 export function createRoadIndex(layout: WorldLayout): RoadIndex {
 	const roadTiles = new Set(layout.roads.map((road) => tileId(road.x, road.z)));
+	const hasWorldPosition = (x: number, z: number) => {
+		const tileX = Math.floor((x + layout.worldSpan / 2) / layout.tileSize);
+		const tileZ = Math.floor((z + layout.worldSpan / 2) / layout.tileSize);
+		return roadTiles.has(tileId(tileX, tileZ));
+	};
 
 	return {
-		hasWorldPosition(x, z) {
-			const tileX = Math.floor((x + layout.worldSpan / 2) / layout.tileSize);
-			const tileZ = Math.floor((z + layout.worldSpan / 2) / layout.tileSize);
-			return roadTiles.has(tileId(tileX, tileZ));
+		hasWorldPosition,
+		surfaceAt(x, z) {
+			return hasWorldPosition(x, z) ? 'road' : 'meadow';
+		},
+	};
+}
+
+export function getRoadsidePosts(layout: WorldLayout): WorldPoint[] {
+	const roadTiles = new Set(layout.roads.map((road) => road.z * layout.gridSize + road.x));
+	const directions = [
+		{ x: 1, z: 0 },
+		{ x: -1, z: 0 },
+		{ x: 0, z: 1 },
+		{ x: 0, z: -1 },
+	] as const;
+	const wrapLayoutTile = (value: number) =>
+		((value % layout.gridSize) + layout.gridSize) % layout.gridSize;
+	const roadsideOffset = layout.tileSize / 2 + 0.5;
+
+	return layout.roads.flatMap((road, index) => {
+		if (index % 9 !== 0) return [];
+
+		for (const direction of directions) {
+			const neighborX = wrapLayoutTile(road.x + direction.x);
+			const neighborZ = wrapLayoutTile(road.z + direction.z);
+			if (roadTiles.has(neighborZ * layout.gridSize + neighborX)) continue;
+
+			return [
+				{
+					x: wrapWorldCoordinate(
+						(road.x + 0.5) * layout.tileSize - layout.worldSpan / 2 + direction.x * roadsideOffset,
+						layout.worldSpan,
+					),
+					z: wrapWorldCoordinate(
+						(road.z + 0.5) * layout.tileSize - layout.worldSpan / 2 + direction.z * roadsideOffset,
+						layout.worldSpan,
+					),
+				},
+			];
+		}
+
+		return [];
+	});
+}
+
+export function createCollisionIndex(layout: WorldLayout): CollisionIndex {
+	const radiusByKind: Readonly<Record<Exclude<PropKind, 'flowers'>, number>> = {
+		tree: 1.25,
+		rock: 0.9,
+		cottage: 2.2,
+	};
+	const obstacles = layout.props.flatMap((prop) => {
+		if (prop.kind === 'flowers') return [];
+		return [{ x: prop.x, z: prop.z, radius: radiusByKind[prop.kind] * prop.scale }];
+	});
+	for (const post of getRoadsidePosts(layout)) obstacles.push({ ...post, radius: 0.25 });
+
+	return {
+		intersectsCircle(x, z, radius) {
+			return obstacles.some((obstacle) => {
+				const distanceX = wrappedDistance(x, obstacle.x, layout.worldSpan);
+				const distanceZ = wrappedDistance(z, obstacle.z, layout.worldSpan);
+				const minimumDistance = radius + obstacle.radius;
+				return distanceX * distanceX + distanceZ * distanceZ < minimumDistance * minimumDistance;
+			});
 		},
 	};
 }

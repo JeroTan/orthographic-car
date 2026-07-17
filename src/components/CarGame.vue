@@ -17,6 +17,7 @@ const controls = reactive<VehicleInput>({
 	brake: false,
 	left: false,
 	right: false,
+	handbrake: false,
 });
 const keyMap: Readonly<Record<string, Control>> = {
 	ArrowUp: 'accelerate',
@@ -27,6 +28,7 @@ const keyMap: Readonly<Record<string, Control>> = {
 	KeyA: 'left',
 	ArrowRight: 'right',
 	KeyD: 'right',
+	Space: 'handbrake',
 };
 const controlButtons: ReadonlyArray<{
 	control: Control;
@@ -39,6 +41,7 @@ const controlButtons: ReadonlyArray<{
 	{ control: 'left', className: 'key-left', key: 'A', arrow: '←', label: 'Steer left' },
 	{ control: 'brake', className: 'key-down', key: 'S', arrow: '↓', label: 'Brake or reverse' },
 	{ control: 'right', className: 'key-right', key: 'D', arrow: '→', label: 'Steer right' },
+	{ control: 'handbrake', className: 'key-drift', key: 'SPACE', arrow: 'DRIFT', label: 'Handbrake drift' },
 ];
 
 let game: GameScene | undefined;
@@ -420,7 +423,7 @@ h1 {
 
 .control-grid {
 	display: grid;
-	grid-template: repeat(2, 2.1rem) / repeat(3, 2.1rem);
+	grid-template: repeat(3, 2.1rem) / repeat(3, 2.1rem);
 	gap: 0.28rem;
 }
 
@@ -459,6 +462,12 @@ h1 {
 .key-left { grid-area: 2 / 1; }
 .key-down { grid-area: 2 / 2; }
 .key-right { grid-area: 2 / 3; }
+.key-drift { grid-area: 3 / 1 / 4 / 4; }
+
+.key-drift kbd,
+.key-drift span {
+	font-size: 0.55rem;
+}
 
 .world-note {
 	position: absolute;
@@ -514,7 +523,7 @@ h1 {
 	.status-copy { display: none; }
 	.speed-readout { min-width: 0; padding-right: 0; border-right: 0; }
 	.controls-panel { bottom: 1rem; padding: 0.6rem; }
-	.control-grid { grid-template: repeat(2, 2.5rem) / repeat(3, 2.5rem); }
+	.control-grid { grid-template: repeat(3, 2.5rem) / repeat(3, 2.5rem); }
 }
 
 @media (prefers-reduced-motion: reduce) {

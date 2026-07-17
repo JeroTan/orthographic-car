@@ -1,7 +1,16 @@
 import * as THREE from 'three';
 
 import { createVehicleController, type VehicleInput } from './vehicle';
-import { createRoadIndex, generateWorld, type PropKind, type PropPlacement, type WorldLayout } from './world';
+import { addVehicleView } from './vehicle-view';
+import {
+	createCollisionIndex,
+	createRoadIndex,
+	generateWorld,
+	getRoadsidePosts,
+	type PropKind,
+	type PropPlacement,
+	type WorldLayout,
+} from './world';
 
 export interface GameTelemetry {
 	speed: number;
@@ -125,20 +134,23 @@ function addWorld(scene: THREE.Scene, layout: WorldLayout): void {
 	const shoulderTransforms: THREE.Matrix4[] = [];
 	const postTransforms: THREE.Matrix4[] = [];
 	const capTransforms: THREE.Matrix4[] = [];
+	const roadsidePosts = getRoadsidePosts(layout);
 
 	for (const mapX of MAP_OFFSETS) {
 		for (const mapZ of MAP_OFFSETS) {
-			for (let index = 0; index < layout.roads.length; index += 1) {
-				const road = layout.roads[index];
+			for (const road of layout.roads) {
 				const x = (road.x + 0.5) * layout.tileSize - layout.worldSpan / 2 + mapX * layout.worldSpan;
 				const z = (road.z + 0.5) * layout.tileSize - layout.worldSpan / 2 + mapZ * layout.worldSpan;
 				shoulderTransforms.push(matrixAt(x, 0, z, 0, layout.tileSize * 1.03, 0.08, layout.tileSize * 1.03));
 				roadTransforms.push(matrixAt(x, 0.08, z, 0, layout.tileSize * 0.94, 0.11, layout.tileSize * 0.94));
 
-				if (index % 9 === 0) {
-					postTransforms.push(matrixAt(x + 2.8, 0.72, z + 2.8, 0, 0.14, 1.35, 0.14));
-					capTransforms.push(matrixAt(x + 2.8, 1.52, z + 2.8, 0, 0.27, 0.27, 0.27));
-				}
+			}
+
+			for (const post of roadsidePosts) {
+				const x = post.x + mapX * layout.worldSpan;
+				const z = post.z + mapZ * layout.worldSpan;
+				postTransforms.push(matrixAt(x, 0.72, z, 0, 0.14, 1.35, 0.14));
+				capTransforms.push(matrixAt(x, 1.52, z, 0, 0.27, 0.27, 0.27));
 			}
 		}
 	}
@@ -229,62 +241,6 @@ function addWorld(scene: THREE.Scene, layout: WorldLayout): void {
 	);
 }
 
-function addCar(scene: THREE.Scene): { group: THREE.Group; wheels: THREE.Mesh[] } {
-	const group = new THREE.Group();
-	const red = new THREE.MeshLambertMaterial({ color: 0xd9523f });
-	const cream = new THREE.MeshLambertMaterial({ color: 0xf5d99d });
-	const glass = new THREE.MeshLambertMaterial({ color: 0x8fc5c2 });
-	const dark = new THREE.MeshLambertMaterial({ color: 0x30343b });
-	const light = new THREE.MeshBasicMaterial({ color: 0xffefaa });
-
-	const body = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.65, 4.3), red);
-	body.position.y = 0.85;
-	group.add(body);
-
-	const hood = new THREE.Mesh(new THREE.BoxGeometry(2.35, 0.34, 1.35), cream);
-	hood.position.set(0, 1.26, 1.12);
-	group.add(hood);
-
-	const cabin = new THREE.Mesh(new THREE.BoxGeometry(2.08, 0.92, 1.75), glass);
-	cabin.position.set(0, 1.58, -0.46);
-	group.add(cabin);
-
-	const roof = new THREE.Mesh(new THREE.BoxGeometry(2.22, 0.18, 1.92), cream);
-	roof.position.set(0, 2.1, -0.46);
-	group.add(roof);
-
-	const wheelGeometry = new THREE.CylinderGeometry(0.48, 0.48, 0.36, 8);
-	wheelGeometry.rotateZ(Math.PI / 2);
-	const wheels: THREE.Mesh[] = [];
-	for (const x of [-1.36, 1.36]) {
-		for (const z of [-1.32, 1.32]) {
-			const wheel = new THREE.Mesh(wheelGeometry, dark);
-			wheel.position.set(x, 0.56, z);
-			group.add(wheel);
-			wheels.push(wheel);
-		}
-	}
-
-	for (const x of [-0.78, 0.78]) {
-		const headlight = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.22, 0.08), light);
-		headlight.position.set(x, 0.95, 2.18);
-		group.add(headlight);
-	}
-
-	const shadow = new THREE.Mesh(
-		new THREE.CircleGeometry(2.25, 18),
-		new THREE.MeshBasicMaterial({ color: 0x24372d, transparent: true, opacity: 0.22, depthWrite: false }),
-	);
-	shadow.rotation.x = -Math.PI / 2;
-	shadow.position.y = 0.06;
-	shadow.scale.y = 0.72;
-	group.add(shadow);
-
-	group.position.y = 0.06;
-	scene.add(group);
-	return { group, wheels };
-}
-
 function disposeScene(scene: THREE.Scene): void {
 	const geometries = new Set<THREE.BufferGeometry>();
 	const materials = new Set<THREE.Material>();
@@ -309,7 +265,12 @@ function disposeScene(scene: THREE.Scene): void {
 
 export function createGameScene(container: HTMLElement, options: GameSceneOptions): GameScene {
 	const layout = generateWorld(options.seed);
-	const controller = createVehicleController({ worldSpan: layout.worldSpan });
+	const roadIndex = createRoadIndex(layout);
+	const controller = createVehicleController({
+		worldSpan: layout.worldSpan,
+		collision: createCollisionIndex(layout),
+		terrain: roadIndex,
+	});
 	const scene = new THREE.Scene();
 	scene.background = new THREE.Color(0xc8ddd1);
 	scene.fog = new THREE.Fog(0xc8ddd1, 72, 160);
@@ -333,8 +294,7 @@ export function createGameScene(container: HTMLElement, options: GameSceneOption
 	scene.add(sun);
 
 	addWorld(scene, layout);
-	const car = addCar(scene);
-	const roadIndex = createRoadIndex(layout);
+	const vehicleView = addVehicleView(scene);
 	let destroyed = false;
 	let lastTime = performance.now();
 	let telemetryElapsed = 0;
@@ -366,10 +326,7 @@ export function createGameScene(container: HTMLElement, options: GameSceneOption
 		const input = options.readInput();
 		controller.step(delta, input);
 		const { state } = controller;
-		car.group.position.x = state.x;
-		car.group.position.z = state.z;
-		car.group.rotation.y = state.heading;
-		for (const wheel of car.wheels) wheel.rotation.x -= state.speed * delta * 0.75;
+		const effectsActive = vehicleView.update(delta, state);
 
 		camera.position.set(state.x + CAMERA_OFFSET, CAMERA_HEIGHT, state.z - CAMERA_OFFSET);
 		camera.lookAt(state.x, 0, state.z);
@@ -380,13 +337,13 @@ export function createGameScene(container: HTMLElement, options: GameSceneOption
 			telemetryElapsed = 0;
 			options.onTelemetry({
 				speed: state.speed,
-				surface: roadIndex.hasWorldPosition(state.x, state.z) ? 'road' : 'meadow',
+				surface: roadIndex.surfaceAt(state.x, state.z),
 				drawCalls: renderer.info.render.calls,
 			});
 		}
 
-		const hasInput = input.accelerate || input.brake || input.left || input.right;
-		idleElapsed = state.speed === 0 && !hasInput ? idleElapsed + delta : 0;
+		const hasInput = input.accelerate || input.brake || input.left || input.right || input.handbrake;
+		idleElapsed = state.speed === 0 && !hasInput && !effectsActive ? idleElapsed + delta : 0;
 		if (idleElapsed >= 0.25) stopLoop();
 	}
 
