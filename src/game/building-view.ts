@@ -2,6 +2,7 @@ import * as THREE from 'three';
 
 import buildingModelUrl from '../assets/buildings/residential-buildings.bin?url';
 import buildingTextureUrl from '../assets/buildings/residential-buildings.webp?url';
+import { buildingOccludesCar } from './building-occlusion';
 import {
 	type BuildingVariant,
 	type WorldLayout,
@@ -22,6 +23,7 @@ interface BuildingInstances {
 	mesh: THREE.InstancedMesh;
 	packed: PackedBuildingVariant;
 	placements: WorldLayout['buildings'];
+	opacity: THREE.InstancedBufferAttribute;
 }
 
 interface TransformScratch {
@@ -30,11 +32,19 @@ interface TransformScratch {
 	rotation: THREE.Quaternion;
 	euler: THREE.Euler;
 	scale: THREE.Vector3;
+	worldCenter: THREE.Vector3;
+	projectedCenter: THREE.Vector3;
+	projectedRadius: THREE.Vector3;
+	projectedCar: THREE.Vector3;
+	cameraRight: THREE.Vector3;
+	cameraUp: THREE.Vector3;
 }
 
 const VARIANT_COUNT = 6;
 const SECTION_HEADER_SIZE = 32;
 const BUILDING_MODEL_SCALE = 0.36;
+const OCCLUDED_BUILDING_OPACITY = 0.1;
+const OPACITY_RESPONSE = 0.22;
 const VARIANT_COLORS = [0xd9c7ad, 0xc9b28f, 0xc48f79, 0xa8bec2, 0xa7b49a, 0xb8afa4] as const;
 
 function assertViewRange(buffer: ArrayBuffer, offset: number, byteLength: number): void {
@@ -100,10 +110,46 @@ function addVariantInstances(
 	if (placements.length === 0) return undefined;
 
 	const mesh = new THREE.InstancedMesh(packed.geometry, material, placements.length);
+	const opacity = new THREE.InstancedBufferAttribute(
+		new Float32Array(placements.length).fill(1),
+		1,
+	);
+	mesh.geometry.setAttribute('instanceOpacity', opacity);
 	mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
 	mesh.frustumCulled = false;
 	scene.add(mesh);
-	return { mesh, packed, placements };
+	return { mesh, packed, placements, opacity };
+}
+
+function createBuildingMaterial(
+	texture: THREE.Texture,
+	color: number,
+): THREE.MeshLambertMaterial {
+	const material = new THREE.MeshLambertMaterial({
+		map: texture,
+		color,
+		transparent: true,
+		depthWrite: false,
+	});
+	material.onBeforeCompile = (shader) => {
+		shader.vertexShader = shader.vertexShader
+			.replace(
+				'#include <common>',
+				'#include <common>\nattribute float instanceOpacity;\nvarying float vInstanceOpacity;',
+			)
+			.replace(
+				'#include <begin_vertex>',
+				'#include <begin_vertex>\nvInstanceOpacity = instanceOpacity;',
+			);
+		shader.fragmentShader = shader.fragmentShader
+			.replace('#include <common>', '#include <common>\nvarying float vInstanceOpacity;')
+			.replace(
+				'#include <color_fragment>',
+				'#include <color_fragment>\ndiffuseColor.a *= vInstanceOpacity;',
+			);
+	};
+	material.customProgramCacheKey = () => 'residential-building-opacity-v1';
+	return material;
 }
 
 function wrappedNear(value: number, origin: number, span: number): number {
@@ -114,8 +160,12 @@ function updateInstances(
 	instances: readonly BuildingInstances[],
 	carPosition: WorldPoint,
 	worldSpan: number,
+	camera: THREE.Camera,
 	scratch: TransformScratch,
 ): void {
+	scratch.projectedCar.set(carPosition.x, 0.85, carPosition.z).project(camera);
+	scratch.cameraRight.setFromMatrixColumn(camera.matrixWorld, 0).normalize();
+	scratch.cameraUp.setFromMatrixColumn(camera.matrixWorld, 1).normalize();
 	for (const variantInstances of instances) {
 		for (let index = 0; index < variantInstances.placements.length; index += 1) {
 			const building = variantInstances.placements[index];
@@ -129,8 +179,41 @@ function updateInstances(
 			scratch.scale.copy(variantInstances.packed.halfExtent).multiplyScalar(modelScale);
 			scratch.matrix.compose(scratch.position, scratch.rotation, scratch.scale);
 			variantInstances.mesh.setMatrixAt(index, scratch.matrix);
+
+			scratch.worldCenter.copy(scratch.position);
+			scratch.projectedCenter.copy(scratch.worldCenter).project(camera);
+			const radius = variantInstances.packed.halfExtent.length() * modelScale;
+			const projectedRadiusX = scratch.projectedRadius
+				.copy(scratch.worldCenter)
+				.addScaledVector(scratch.cameraRight, radius)
+				.project(camera);
+			const projectedRadiusY = scratch.projectedRadius
+				.copy(scratch.worldCenter)
+				.addScaledVector(scratch.cameraUp, radius)
+				.project(camera);
+			const occluded = buildingOccludesCar(
+				{
+					x: scratch.projectedCenter.x,
+					y: scratch.projectedCenter.y,
+					z: scratch.projectedCenter.z,
+					radiusX: Math.abs(projectedRadiusX.x - scratch.projectedCenter.x),
+					radiusY: Math.abs(projectedRadiusY.y - scratch.projectedCenter.y),
+				},
+				{
+					x: scratch.projectedCar.x,
+					y: scratch.projectedCar.y,
+					z: scratch.projectedCar.z,
+				},
+			);
+			const targetOpacity = occluded ? OCCLUDED_BUILDING_OPACITY : 1;
+			const currentOpacity = variantInstances.opacity.getX(index);
+			variantInstances.opacity.setX(
+				index,
+				currentOpacity + (targetOpacity - currentOpacity) * OPACITY_RESPONSE,
+			);
 		}
 		variantInstances.mesh.instanceMatrix.needsUpdate = true;
+		variantInstances.opacity.needsUpdate = true;
 	}
 }
 
@@ -138,6 +221,7 @@ export function addBuildingView(
 	scene: THREE.Scene,
 	layout: WorldLayout,
 	onAssetReady: () => void,
+	camera: THREE.Camera,
 ): BuildingView {
 	let destroyed = false;
 	let loadedTexture: THREE.Texture | undefined;
@@ -150,6 +234,12 @@ export function addBuildingView(
 		rotation: new THREE.Quaternion(),
 		euler: new THREE.Euler(),
 		scale: new THREE.Vector3(),
+		worldCenter: new THREE.Vector3(),
+		projectedCenter: new THREE.Vector3(),
+		projectedRadius: new THREE.Vector3(),
+		projectedCar: new THREE.Vector3(),
+		cameraRight: new THREE.Vector3(),
+		cameraUp: new THREE.Vector3(),
 	};
 	void Promise.all([
 		fetch(buildingModelUrl),
@@ -170,10 +260,7 @@ export function addBuildingView(
 			loadedTexture = texture;
 			loadedVariants = variants;
 			for (let index = 0; index < variants.length; index += 1) {
-				const material = new THREE.MeshLambertMaterial({
-					map: texture,
-					color: VARIANT_COLORS[index],
-				});
+				const material = createBuildingMaterial(texture, VARIANT_COLORS[index]);
 				const variantInstances = addVariantInstances(
 					scene,
 					layout,
@@ -183,7 +270,7 @@ export function addBuildingView(
 				);
 				if (variantInstances) instances.push(variantInstances);
 			}
-			updateInstances(instances, latestCarPosition, layout.worldSpan, transformScratch);
+			updateInstances(instances, latestCarPosition, layout.worldSpan, camera, transformScratch);
 			onAssetReady();
 		})
 		.catch((error: unknown) => {
@@ -194,7 +281,7 @@ export function addBuildingView(
 		update(carPosition) {
 			latestCarPosition = carPosition;
 			if (instances.length > 0) {
-				updateInstances(instances, carPosition, layout.worldSpan, transformScratch);
+				updateInstances(instances, carPosition, layout.worldSpan, camera, transformScratch);
 			}
 		},
 		destroy() {

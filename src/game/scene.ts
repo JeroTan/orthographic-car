@@ -364,7 +364,7 @@ export function createGameScene(container: HTMLElement, options: GameSceneOption
 	scene.add(sun);
 
 	addWorld(scene, layout, () => startLoop());
-	const buildingView = addBuildingView(scene, layout, () => startLoop());
+	const buildingView = addBuildingView(scene, layout, () => startLoop(), camera);
 	const grassView = addGrassView(scene, layout, () => startLoop());
 	const vehicleView = addVehicleView(
 		scene,
@@ -405,11 +405,11 @@ export function createGameScene(container: HTMLElement, options: GameSceneOption
 		controller.step(delta, input);
 		const { state } = controller;
 		const effectsActive = vehicleView.update(delta, state);
-		buildingView.update(state);
-		grassView.update(now / 1000, state);
-
 		camera.position.set(state.x + CAMERA_OFFSET, CAMERA_HEIGHT, state.z - CAMERA_OFFSET);
 		camera.lookAt(state.x, 0, state.z);
+		camera.updateMatrixWorld();
+		buildingView.update(state);
+		grassView.update(now / 1000, state);
 		renderer.render(scene, camera);
 
 		telemetryElapsed += delta;
