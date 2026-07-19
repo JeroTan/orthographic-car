@@ -34,7 +34,7 @@ interface TransformScratch {
 
 const VARIANT_COUNT = 6;
 const SECTION_HEADER_SIZE = 32;
-const BUILDING_MODEL_SCALE = 0.29;
+const BUILDING_MODEL_SCALE = 0.36;
 const VARIANT_COLORS = [0xd9c7ad, 0xc9b28f, 0xc48f79, 0xa8bec2, 0xa7b49a, 0xb8afa4] as const;
 
 function assertViewRange(buffer: ArrayBuffer, offset: number, byteLength: number): void {
