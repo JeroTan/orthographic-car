@@ -267,7 +267,7 @@ export function generateWorld(seed: number): WorldLayout {
 			for (let patch = 0; patch < 4; patch += 1) {
 				const grassX = tileToWorld(x) + (grassRandom() - 0.5) * WORLD_TILE_SIZE * 0.84;
 				const grassZ = tileToWorld(z) + (grassRandom() - 0.5) * WORLD_TILE_SIZE * 0.84;
-				if (isNearBuilding(buildings, { x: grassX, z: grassZ }, 4)) continue;
+				if (isNearBuilding(buildings, { x: grassX, z: grassZ }, 4.5)) continue;
 				const kind: GrassKind = grassRandom() < 0.14 ? 'wild' : 'field';
 				const scale = 0.72 + grassRandom() * 0.58;
 				const clearance = grassPatchRadius(kind, scale) + 0.25;
@@ -314,7 +314,7 @@ export function generateWorld(seed: number): WorldLayout {
 			const jitter = kind === 'cottage' ? 0.08 : 0.26;
 			const propX = tileToWorld(x) + (random() - 0.5) * WORLD_TILE_SIZE * jitter;
 			const propZ = tileToWorld(z) + (random() - 0.5) * WORLD_TILE_SIZE * jitter;
-			if (isNearBuilding(buildings, { x: propX, z: propZ }, kind === 'cottage' ? 5 : 3.5)) {
+			if (isNearBuilding(buildings, { x: propX, z: propZ }, kind === 'cottage' ? 5.5 : 4)) {
 				continue;
 			}
 			props.push({
@@ -457,7 +457,7 @@ export function createCollisionIndex(
 		return [{ x: prop.x, z: prop.z, radius: radiusByKind[prop.kind] * prop.scale }];
 	});
 	for (const building of layout.buildings ?? []) {
-		obstacles.push({ x: building.x, z: building.z, radius: 2.75 * building.scale });
+		obstacles.push({ x: building.x, z: building.z, radius: 3.1 * building.scale });
 	}
 	for (const post of getRoadsidePosts(layout)) obstacles.push({ ...post, radius: 0.25 });
 

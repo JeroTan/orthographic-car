@@ -34,7 +34,7 @@ interface TransformScratch {
 
 const VARIANT_COUNT = 6;
 const SECTION_HEADER_SIZE = 32;
-const MODEL_SCALE = 0.25;
+const BUILDING_MODEL_SCALE = 0.29;
 const VARIANT_COLORS = [0xd9c7ad, 0xc9b28f, 0xc48f79, 0xa8bec2, 0xa7b49a, 0xb8afa4] as const;
 
 function assertViewRange(buffer: ArrayBuffer, offset: number, byteLength: number): void {
@@ -119,7 +119,7 @@ function updateInstances(
 	for (const variantInstances of instances) {
 		for (let index = 0; index < variantInstances.placements.length; index += 1) {
 			const building = variantInstances.placements[index];
-			const modelScale = MODEL_SCALE * building.scale;
+			const modelScale = BUILDING_MODEL_SCALE * building.scale;
 			scratch.position.set(
 				wrappedNear(building.x, carPosition.x, worldSpan),
 				variantInstances.packed.halfExtent.y * modelScale + 0.02,
