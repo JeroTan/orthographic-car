@@ -23,31 +23,37 @@ Porsche's 997.1 and 997.2 material publishes 0–100 km/h rather than a separate
 
 The 991.2 sources use different acceleration standards: Porsche Newsroom gives 0–100 km/h in 2.8 s, while the US press kit gives 0–60 mph in 2.7 s and calls 211 mph its top track speed ([Newsroom 2017](https://newsroom.porsche.com/en/products/porsche-911-gt2-rs-world-premiere-festival-of-speed-2017-goodwood-13892.html), [US press kit](https://newsroom.porsche.com/dam/jcr%3A7b4d72bf-075f-4af0-bdbc-88491ef75b14/PCNA18_0106_us.pdf)). Do not substitute 0–60 for 0–100 or treat rounded km/h and mph values as separate model variants.
 
-## Translation to current arcade vehicle units
+## Spatial calibration
 
-Current controller constants and conversion are in [`vehicle.ts`](../src/game/vehicle.ts#L42-L69): road launch acceleration `2.2` world units/s², meadow acceleration `1.35`, road cap `26`, meadow cap `14`, reverse cap `12`, and `12.65 km/h` per world unit/s. Forward acceleration tapers with speed; the figures below describe current code, not a direct physical unit conversion.
+Porsche lists the 997 911 GT2 at 4,469 mm long and 1,852 mm wide ([Porsche Centre Langley vehicle specification](https://finder.porsche.com/ca/en-CA/details/porsche-911-gt2-preowned-XLWN6O)). The packed game asset measures about 4.908842 by 2.156494 world units after `MODEL_SCALE = 1.1`. `vehicle.ts` uses length as longitudinal scale: one world unit is `4.469 / 4.908842 = 0.9104 m` and one world-unit/second is `3.2774 km/h`.
+
+At 20 km/h, controller now travels `6.102` world units/s: about `1.24` packed-car lengths each second. This keeps HUD speed and visible road travel tied to same metre scale; old `12.65 km/h` conversion made 20 km/h only `1.58` world units/s, less than half car length per second.
+
+## Translation to current vehicle units
+
+Current controller constants and conversion are in [`vehicle.ts`](../src/game/vehicle.ts#L42-L112): road launch acceleration `7.73 m/s²`, meadow acceleration `4.74 m/s²`, road cap `329 km/h`, meadow cap `177 km/h`, reverse cap `152 km/h`, and `3.2774 km/h` per world unit/s. Forward acceleration tapers with speed; longitudinal rates are converted into calibrated world units before integration.
 
 | Controller quantity | Calculation | Result |
 | --- | --- | ---: |
-| Road displayed top speed | `26 × 12.65` | 328.9 km/h (HUD rounds to 329) |
-| Meadow displayed top speed | `14 × 12.65` | 177.1 km/h (HUD rounds to 177) |
-| Road reverse displayed cap | `12 × 12.65` | 151.8 km/h (HUD rounds to 152) |
+| Road displayed top speed | `100.383 × 3.2774` | 329 km/h |
+| Meadow displayed top speed | `54.036 × 3.2774` | 177 km/h |
+| Road reverse displayed cap | `46.317 × 3.2774` | 152 km/h |
 | Road 0–100, straight and unobstructed | 0.05 s simulation steps with taper | ≈3.75 s |
 
-The 3.75 s result is an inference from current constants and the tested timestep, assuming no steering, terrain drag, collision, or frame-quantization effects beyond that timestep ([speed and acceleration constants](../src/game/vehicle.ts#L42-L69), [longitudinal update](../src/game/vehicle.ts#L100-L135)). It sits close to Porsche's published 997.1 GT2 range of 3.6–3.7 s and is slower than the 991.2 GT2 RS's 2.8 s figure ([Porsche GT2 history](https://www.porsche.com/stories/mobility/the-legend-of-the-porsche-911-gt2/), [Porsche Newsroom 2017](https://newsroom.porsche.com/en/products/porsche-911-gt2-rs-world-premiere-festival-of-speed-2017-goodwood-13892.html)). The road cap now matches the 997.1 329 km/h launch figure by display conversion, but world units remain an arcade scale.
+The 3.75 s result is an inference from current constants and the tested timestep, assuming no steering, terrain drag, collision, or frame-quantization effects beyond that timestep ([speed and acceleration constants](../src/game/vehicle.ts#L42-L112), [longitudinal update](../src/game/vehicle.ts#L143-L178)). It sits close to Porsche's published 997.1 GT2 range of 3.6–3.7 s and is slower than the 991.2 GT2 RS's 2.8 s figure ([Porsche GT2 history](https://www.porsche.com/stories/mobility/the-legend-of-the-porsche-911-gt2/), [Porsche Newsroom 2017](https://newsroom.porsche.com/en/products/porsche-911-gt2-rs-world-premiere-festival-of-speed-2017-goodwood-13892.html)). World units now use car-length calibration, so displayed speed also produces visible travel at expected scale.
 
-The current `2.2` launch value plus `SPEED_ACCELERATION_TAPER = 0.8` and curve `1.6` intentionally reaches the 997.1 benchmark without a linear acceleration jump. A 991.2-style 2.8 s target would require a materially stronger curve or a separate selectable handling profile; do not raise the map's world-speed cap solely to chase 340 km/h, because camera, map scale, and collision readability use the existing world units.
+The `7.73 m/s²` launch value plus `SPEED_ACCELERATION_TAPER = 0.8` and curve `1.6` intentionally reaches the 997.1 benchmark without a linear acceleration jump. A 991.2-style 2.8 s target would require a materially stronger curve or a separate selectable handling profile; do not raise the map's world-speed cap solely to chase 340 km/h.
 
 ## Drift and cornering implications
 
 Porsche identifies the 991.2 GT2 RS as rear-wheel drive with rear-axle steering and Ultra High Performance tyres, and describes its chassis as optimized for high cornering forces ([Porsche Newsroom 2017](https://newsroom.porsche.com/en/products/porsche-911-gt2-rs-world-premiere-festival-of-speed-2017-goodwood-13892.html)). That supports rear-driven launch slip and strong lateral grip as visual/handling cues, but it does not specify an arcade drift-speed-loss rate.
 
-Current game steering applies speed-ratio-scaled `TURNING_DRAG = 4`; handbrake adds `HANDBRAKE_DRAG = 6` before steering drag ([steering update](../src/game/vehicle.ts#L138-L165), [handbrake longitudinal update](../src/game/vehicle.ts#L100-L135)). At road cap, sustained handbrake steering with no throttle can therefore remove up to `4 + 6 = 10` world units/s², or about `126.5 km/h/s` under current conversion. With throttle held, the handbrake throttle factor (`0.25`) and speed taper leave only a small drive term near the cap, so the same drag still produces a large short-drift speed loss. This is intentionally dramatic arcade behavior, not a measured GT2 RS property.
+Current game steering applies speed-ratio-scaled `TURNING_DRAG = 15.44` world units/s²; handbrake adds `HANDBRAKE_DRAG = 23.16` before steering drag ([steering update](../src/game/vehicle.ts#L181-L208), [handbrake longitudinal update](../src/game/vehicle.ts#L143-L178)). At road cap, sustained handbrake steering with no throttle can therefore remove up to `38.6` world units/s², or about `126.5 km/h/s` under calibrated conversion. With throttle held, the handbrake throttle factor (`0.25`) and speed taper leave only a small drive term near the cap, so the same drag still produces a large short-drift speed loss. This is intentionally dramatic arcade behavior, not a measured GT2 RS property.
 
 Recommended tuning interpretation:
 
-- Keep normal road turning drag modest so high-grip rear-drive behavior retains momentum; current `4` units/s² is a visible cornering penalty at cap.
-- Reserve stronger loss for explicit handbrake input; current extra `6` units/s² makes drift readable and controllable, but lower it if drift exits feel like braking rather than sliding.
+- Keep normal road turning drag modest so high-grip rear-drive behavior retains momentum; current `15.44` calibrated units/s² is a visible cornering penalty at cap.
+- Reserve stronger loss for explicit handbrake input; current extra `23.16` calibrated units/s² makes drift readable and controllable, but lower it if drift exits feel like braking rather than sliding.
 - Preserve rear-slip effects during launch and handbrake turns. Porsche's rear-wheel-drive and UHP-tyre description supports the direction of those cues, while exact slip magnitude remains game design ([rear-drive / tyre details](https://newsroom.porsche.com/en/products/porsche-911-gt2-rs-world-premiere-festival-of-speed-2017-goodwood-13892.html), [rear-grip constants](../src/game/vehicle.ts#L61-L63)).
 - Validate any change against both speedometer target and corner exit feel; matching 0–100 alone does not validate drift behavior.
 
@@ -55,6 +61,7 @@ Recommended tuning interpretation:
 
 Accessed 2026-07-20:
 
+- [Porsche: Used 911 GT2 dimensions and performance](https://finder.porsche.com/ca/en-CA/details/porsche-911-gt2-preowned-XLWN6O)
 - [Porsche: The legend of the 911 GT2](https://www.porsche.com/stories/mobility/the-legend-of-the-porsche-911-gt2/)
 - [Porsche Classic Australia: 911 GT2 (type 996)](https://www.porsche.com/australia/accessoriesandservice/classic/models/996/996-gt2/)
 - [Porsche USA: New 911 GT2 with 530 Horsepower (2007)](https://www.porsche.com/usa/aboutporsche/pressreleases/pag/?id=2007-07-16&pool=international-de)

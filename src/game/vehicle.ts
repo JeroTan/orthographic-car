@@ -39,24 +39,61 @@ interface VehicleConfig {
 	terrain?: TerrainQuery;
 }
 
-const ACCELERATION = 2.2;
-const MEADOW_ACCELERATION = 1.35;
-const BRAKING = 14;
-const REVERSE_ACCELERATION = 7;
-const MEADOW_REVERSE_ACCELERATION = 4.5;
-const COAST_DRAG = 2.4;
-const MAX_SPEED = 26;
-const MAX_MEADOW_SPEED = 14;
-const MEADOW_OVERSPEED_DRAG = 8;
-const GRASS_ROLLING_DRAG = 1.1;
+/** Porsche 911 GT2 (997) dimensions from Porsche technical data. */
+export const PORSCHE_DIMENSIONS_METERS = Object.freeze({
+	length: 4.469,
+	width: 1.852,
+});
+
+/** Packed asset dimensions after MODEL_SCALE in porsche-model.ts. */
+export const PORSCHE_MODEL_DIMENSIONS_WORLD = Object.freeze({
+	length: 4.908842,
+	width: 2.156494,
+});
+
+/** World units now track car-sized metres instead of the old arcade scale. */
+export const WORLD_METERS_PER_UNIT =
+	PORSCHE_DIMENSIONS_METERS.length / PORSCHE_MODEL_DIMENSIONS_WORLD.length;
+export const WORLD_SPEED_TO_KMH = WORLD_METERS_PER_UNIT * 3.6;
+const WORLD_UNITS_PER_METER = 1 / WORLD_METERS_PER_UNIT;
+
+const ROAD_ACCELERATION_MPS2 = 7.73;
+const MEADOW_ACCELERATION_MPS2 = 4.74;
+const BRAKING_MPS2 = 13.68;
+const REVERSE_ACCELERATION_MPS2 = 6.83;
+const MEADOW_REVERSE_ACCELERATION_MPS2 = 4.39;
+const COAST_DRAG_MPS2 = 8.43;
+const MEADOW_OVERSPEED_DRAG_MPS2 = 28.13;
+const GRASS_ROLLING_DRAG_MPS2 = 3.86;
+const TURNING_DRAG_MPS2 = 14.06;
+const HANDBRAKE_DRAG_MPS2 = 21.08;
+
+function worldSpeedFromKmh(speedKmh: number): number {
+	return speedKmh / WORLD_SPEED_TO_KMH;
+}
+
+function worldAccelerationFromMps2(accelerationMps2: number): number {
+	return accelerationMps2 * WORLD_UNITS_PER_METER;
+}
+
+const ACCELERATION = worldAccelerationFromMps2(ROAD_ACCELERATION_MPS2);
+const MEADOW_ACCELERATION = worldAccelerationFromMps2(MEADOW_ACCELERATION_MPS2);
+const BRAKING = worldAccelerationFromMps2(BRAKING_MPS2);
+const REVERSE_ACCELERATION = worldAccelerationFromMps2(REVERSE_ACCELERATION_MPS2);
+const MEADOW_REVERSE_ACCELERATION = worldAccelerationFromMps2(MEADOW_REVERSE_ACCELERATION_MPS2);
+const COAST_DRAG = worldAccelerationFromMps2(COAST_DRAG_MPS2);
+const MAX_SPEED = worldSpeedFromKmh(329);
+const MAX_MEADOW_SPEED = worldSpeedFromKmh(177);
+const MEADOW_OVERSPEED_DRAG = worldAccelerationFromMps2(MEADOW_OVERSPEED_DRAG_MPS2);
+const GRASS_ROLLING_DRAG = worldAccelerationFromMps2(GRASS_ROLLING_DRAG_MPS2);
 const GRASS_SPEED_DRAG = 0.12;
-const MAX_REVERSE_SPEED = 12;
-const MAX_MEADOW_REVERSE_SPEED = 7;
+const MAX_REVERSE_SPEED = worldSpeedFromKmh(152);
+const MAX_MEADOW_REVERSE_SPEED = worldSpeedFromKmh(89);
 const STEERING_RATE = 1.8;
 const MAX_STEERING_ANGLE = 0.5;
 const STEERING_RESPONSE = 4.5;
-const TURNING_DRAG = 4;
-const HANDBRAKE_DRAG = 6;
+const TURNING_DRAG = worldAccelerationFromMps2(TURNING_DRAG_MPS2);
+const HANDBRAKE_DRAG = worldAccelerationFromMps2(HANDBRAKE_DRAG_MPS2);
 const HANDBRAKE_YAW_BOOST = 1.65;
 const ROAD_GRIP = 10;
 const BRAKING_REAR_GRIP = 4.5;
@@ -66,10 +103,16 @@ const CAR_COLLISION_RADIUS = 1.25;
 const CAR_COLLISION_OFFSET = 1.1;
 const SPEED_ACCELERATION_TAPER = 0.8;
 const SPEED_ACCELERATION_CURVE = 1.6;
-const WORLD_SPEED_TO_KMH = 12.65;
+const LAUNCH_SLIP_SPEED = worldSpeedFromKmh(75.9);
+const HARD_BRAKING_SPEED = worldSpeedFromKmh(101.2);
+const LATERAL_LOAD_SPEED = worldSpeedFromKmh(404.8);
 
 export function toSpeedometerKmh(longitudinalSpeed: number): number {
 	return Math.round(Math.abs(longitudinalSpeed) * WORLD_SPEED_TO_KMH);
+}
+
+export function toWorldSpeed(speedKmh: number): number {
+	return worldSpeedFromKmh(speedKmh);
 }
 
 const SURFACE_HANDLING = {
@@ -192,7 +235,11 @@ function updatePhysicsFeedback(
 		deltaSeconds > 0
 			? Math.max(
 					-1,
-					Math.min(1, ((state.heading - previousHeading) / deltaSeconds) * Math.abs(state.speed) / 32),
+					Math.min(
+						1,
+						((state.heading - previousHeading) / deltaSeconds) *
+							(Math.abs(state.speed) / LATERAL_LOAD_SPEED),
+					),
 				)
 			: 0;
 	const driftSlip = input.handbrake ? Math.min(1, Math.abs(state.slipAngle) * 3) : 0;
@@ -254,12 +301,12 @@ export function createVehicleController(config: VehicleConfig): VehicleControlle
 			const rightX = Math.cos(state.heading);
 			const rightZ = -Math.sin(state.heading);
 			const launchSlip =
-				input.accelerate && !input.brake && previousSpeed >= 0 && state.speed < 6
-					? 1 - state.speed / 6
+				input.accelerate && !input.brake && previousSpeed >= 0 && state.speed < LAUNCH_SLIP_SPEED
+					? 1 - state.speed / LAUNCH_SLIP_SPEED
 					: 0;
 			const lateralVelocity = velocityX * rightX + velocityZ * rightZ;
 			const poweredRearGrip = ROAD_GRIP * (1 - launchSlip * 0.45);
-			const hardBraking = input.brake && !input.accelerate && previousSpeed > 8;
+			const hardBraking = input.brake && !input.accelerate && previousSpeed > HARD_BRAKING_SPEED;
 			const grip = input.handbrake
 				? HANDBRAKE_REAR_GRIP
 				: hardBraking

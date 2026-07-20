@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
-import { createVehicleController, toSpeedometerKmh } from './vehicle';
+import {
+	createVehicleController,
+	PORSCHE_DIMENSIONS_METERS,
+	PORSCHE_MODEL_DIMENSIONS_WORLD,
+	toSpeedometerKmh,
+	toWorldSpeed,
+	WORLD_METERS_PER_UNIT,
+	WORLD_SPEED_TO_KMH,
+} from './vehicle';
 import { createCollisionIndex, createTerrainIndex } from './world';
 
 describe('vehicle controller', () => {
@@ -20,11 +28,33 @@ describe('vehicle controller', () => {
 	});
 
 	it('shows reverse motion as positive speedometer speed', () => {
-		expect([toSpeedometerKmh(12), toSpeedometerKmh(-12)]).toEqual([152, 152]);
+		const reverseWorldSpeed = toWorldSpeed(120);
+		expect([toSpeedometerKmh(reverseWorldSpeed), toSpeedometerKmh(-reverseWorldSpeed)]).toEqual([
+			120,
+			120,
+		]);
 	});
 
 	it('maps Porsche 911 GT2 top speed to 329 km/h', () => {
-		expect(toSpeedometerKmh(26)).toBe(329);
+		expect(toSpeedometerKmh(toWorldSpeed(329))).toBe(329);
+	});
+
+	it('maps 20 km/h to more than one Porsche length per second', () => {
+		const worldSpeed = toWorldSpeed(20);
+		const metersPerSecond = worldSpeed * WORLD_METERS_PER_UNIT;
+		const carLengthsPerSecond = worldSpeed / PORSCHE_MODEL_DIMENSIONS_WORLD.length;
+
+		expect({
+			lengthMeters: PORSCHE_DIMENSIONS_METERS.length,
+			widthMeters: PORSCHE_DIMENSIONS_METERS.width,
+			kmhPerWorldSpeed: WORLD_SPEED_TO_KMH,
+		}).toEqual({
+			lengthMeters: 4.469,
+			widthMeters: 1.852,
+			kmhPerWorldSpeed: WORLD_SPEED_TO_KMH,
+		});
+		expect(metersPerSecond).toBeCloseTo(20 / 3.6, 6);
+		expect(carLengthsPerSecond).toBeGreaterThan(1);
 	});
 
 	it('tapers acceleration as speed rises and reaches 100 km/h in Porsche-like time', () => {
@@ -43,7 +73,7 @@ describe('vehicle controller', () => {
 		vehicle.step(0.05, input);
 		const incrementAt100 = vehicle.state.speed - speedAt100;
 		let speedNearTop = vehicle.state.speed;
-		while (speedNearTop < 24) {
+		while (speedNearTop < toWorldSpeed(300) + 0.25) {
 			vehicle.step(0.05, input);
 			speedNearTop = vehicle.state.speed;
 		}
@@ -137,7 +167,10 @@ describe('vehicle controller', () => {
 			meadow.step(0.05, input);
 		}
 
-		expect([road.state.speed, meadow.state.speed]).toEqual([26, 14]);
+		expect([toSpeedometerKmh(road.state.speed), toSpeedometerKmh(meadow.state.speed)]).toEqual([
+			329,
+			177,
+		]);
 	});
 
 	it('accelerates more slowly on meadow than on road', () => {
@@ -226,7 +259,10 @@ describe('vehicle controller', () => {
 			meadow.step(0.05, input);
 		}
 
-		expect([road.state.speed, meadow.state.speed]).toEqual([-12, -7]);
+		expect([toSpeedometerKmh(road.state.speed), toSpeedometerKmh(meadow.state.speed)]).toEqual([
+			152,
+			89,
+		]);
 	});
 
 	it('keeps momentum when leaving road for meadow', () => {
