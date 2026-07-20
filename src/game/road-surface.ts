@@ -39,6 +39,7 @@ const CROSSWALK_STRIPE_LENGTH_FACTOR = 0.36;
 const CROSSWALK_STRIPE_THICKNESS_FACTOR = 0.075;
 const CROSSWALK_STRIPE_SPACING_FACTOR = 0.11;
 const CROSSWALK_APPROACH_OFFSET_FACTOR = 0.26;
+const CROSSWALK_STRIPE_ROTATION = Math.PI / 2;
 
 function roadTileKey(layout: RoadLayout, x: number, z: number): number {
 	return z * layout.gridSize + x;
@@ -150,7 +151,8 @@ export function buildRoadDecorations(layout: RoadLayout): RoadDecorationData {
 					crosswalkStripes.push({
 						x: centerX + direction.x * distanceFromCenter,
 						z: centerZ + direction.z * distanceFromCenter,
-						// Stripe long axis crosses road; short axis follows traffic.
+						rotation: CROSSWALK_STRIPE_ROTATION,
+						// Rotate base rectangle into rendered pedestrian-lane orientation.
 						width: direction.x === 0 ? crosswalkStripeLength : crosswalkStripeThickness,
 						depth: direction.z === 0 ? crosswalkStripeLength : crosswalkStripeThickness,
 					});

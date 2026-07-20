@@ -139,18 +139,27 @@ describe('road surface', () => {
 		const eastStripeGaps = eastStripes
 			.slice(1)
 			.map((stripe, index) => stripe.x - eastStripes[index].x);
-		const eastWestStripesSpanRoad = eastStripes.every(
-			(stripe) => stripe.depth > stripe.width,
-		);
 		const northSouthStripes = decorations.crosswalkStripes.filter((stripe) => stripe.z > 0);
-		const northSouthStripesSpanRoad = northSouthStripes.every(
-			(stripe) => stripe.width > stripe.depth,
-		);
+		const renderedDimensions = (stripe: (typeof decorations.crosswalkStripes)[number]) =>
+			Math.abs(Math.sin(stripe.rotation ?? 0)) > 0.5
+				? { width: stripe.depth, depth: stripe.width }
+				: { width: stripe.width, depth: stripe.depth };
+		const eastWestStripesRenderAcrossLane = eastStripes.every((stripe) => {
+			const dimensions = renderedDimensions(stripe);
+			return dimensions.width > dimensions.depth;
+		});
+		const northSouthStripesRenderAcrossLane = northSouthStripes.every((stripe) => {
+			const dimensions = renderedDimensions(stripe);
+			return dimensions.depth > dimensions.width;
+		});
 		const pedestrianSizedStripes = decorations.crosswalkStripes.every((stripe) => {
 			const longSide = Math.max(stripe.width, stripe.depth);
 			const shortSide = Math.min(stripe.width, stripe.depth);
 			return shortSide >= layout.tileSize * 0.06 && longSide / shortSide <= 6;
 		});
+		const rotatedForPedestrianLane = decorations.crosswalkStripes.every(
+			(stripe) => Math.abs((stripe.rotation ?? 0) - Math.PI / 2) < 0.001,
+		);
 
 		expect({
 			centerDashes: decorations.centerDashes.length,
@@ -158,18 +167,20 @@ describe('road surface', () => {
 			approachEdgeBars,
 			eastStripeCount: eastStripes.length,
 			visibleStripeGaps: eastStripeGaps.every((gap) => gap >= 0.24),
-			eastWestStripesSpanRoad,
-			northSouthStripesSpanRoad,
+			eastWestStripesRenderAcrossLane,
+			northSouthStripesRenderAcrossLane,
 			pedestrianSizedStripes,
+			rotatedForPedestrianLane,
 		}).toEqual({
 			centerDashes: 0,
 			crosswalkStripes: 20,
 			approachEdgeBars: true,
 			eastStripeCount: 5,
 			visibleStripeGaps: true,
-			eastWestStripesSpanRoad: true,
-			northSouthStripesSpanRoad: true,
+			eastWestStripesRenderAcrossLane: true,
+			northSouthStripesRenderAcrossLane: true,
 			pedestrianSizedStripes: true,
+			rotatedForPedestrianLane: true,
 		});
 	});
 
