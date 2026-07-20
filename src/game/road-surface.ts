@@ -35,6 +35,10 @@ export interface RoadDecorationData {
 
 const ROAD_CORNER_SEGMENTS = 8;
 const CROSSWALK_STRIPE_COUNT = 5;
+const CROSSWALK_STRIPE_LENGTH_FACTOR = 0.36;
+const CROSSWALK_STRIPE_THICKNESS_FACTOR = 0.075;
+const CROSSWALK_STRIPE_SPACING_FACTOR = 0.11;
+const CROSSWALK_APPROACH_OFFSET_FACTOR = 0.26;
 
 function roadTileKey(layout: RoadLayout, x: number, z: number): number {
 	return z * layout.gridSize + x;
@@ -67,6 +71,10 @@ export function buildRoadDecorations(layout: RoadLayout): RoadDecorationData {
 	const halfTile = layout.tileSize / 2;
 	const pavementDepth = Math.min(0.8, layout.tileSize * 0.1);
 	const lineThickness = Math.min(0.12, layout.tileSize * 0.015);
+	const crosswalkStripeLength = layout.tileSize * CROSSWALK_STRIPE_LENGTH_FACTOR;
+	const crosswalkStripeThickness = layout.tileSize * CROSSWALK_STRIPE_THICKNESS_FACTOR;
+	const crosswalkStripeSpacing = layout.tileSize * CROSSWALK_STRIPE_SPACING_FACTOR;
+	const crosswalkApproachOffset = layout.tileSize * CROSSWALK_APPROACH_OFFSET_FACTOR;
 
 	function hasRoad(x: number, z: number): boolean {
 		return roadTiles.has(
@@ -137,13 +145,14 @@ export function buildRoadDecorations(layout: RoadLayout): RoadDecorationData {
 				if (!direction.connected) continue;
 				for (let stripe = 0; stripe < CROSSWALK_STRIPE_COUNT; stripe += 1) {
 					const distanceFromCenter =
-						halfTile + layout.tileSize * 0.12 -
-							(stripe - (CROSSWALK_STRIPE_COUNT - 1) / 2) * layout.tileSize * 0.045;
+						halfTile + crosswalkApproachOffset -
+							(stripe - (CROSSWALK_STRIPE_COUNT - 1) / 2) * crosswalkStripeSpacing;
 					crosswalkStripes.push({
 						x: centerX + direction.x * distanceFromCenter,
 						z: centerZ + direction.z * distanceFromCenter,
-						width: direction.x === 0 ? layout.tileSize * 0.62 : lineThickness * 1.7,
-						depth: direction.z === 0 ? layout.tileSize * 0.62 : lineThickness * 1.7,
+						// Stripe long axis crosses road; short axis follows traffic.
+						width: direction.x === 0 ? crosswalkStripeLength : crosswalkStripeThickness,
+						depth: direction.z === 0 ? crosswalkStripeLength : crosswalkStripeThickness,
 					});
 				}
 			}

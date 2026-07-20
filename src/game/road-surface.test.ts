@@ -119,18 +119,17 @@ describe('road surface', () => {
 	});
 
 	it('adds separated crosswalk stripes outside a four-way intersection', () => {
-		const decorations = buildRoadDecorations(
-			roadLayout(
-				[
-					{ x: 2, z: 2 },
-					{ x: 1, z: 2 },
-					{ x: 3, z: 2 },
-					{ x: 2, z: 1 },
-					{ x: 2, z: 3 },
-				],
-				5,
-			),
+		const layout = roadLayout(
+			[
+				{ x: 2, z: 2 },
+				{ x: 1, z: 2 },
+				{ x: 3, z: 2 },
+				{ x: 2, z: 1 },
+				{ x: 2, z: 3 },
+			],
+			5,
 		);
+		const decorations = buildRoadDecorations(layout);
 		const approachEdgeBars = decorations.crosswalkStripes.every((stripe) =>
 			Math.max(Math.abs(stripe.x), Math.abs(stripe.z)) >= 4.2,
 		);
@@ -147,6 +146,11 @@ describe('road surface', () => {
 		const northSouthStripesSpanRoad = northSouthStripes.every(
 			(stripe) => stripe.width > stripe.depth,
 		);
+		const pedestrianSizedStripes = decorations.crosswalkStripes.every((stripe) => {
+			const longSide = Math.max(stripe.width, stripe.depth);
+			const shortSide = Math.min(stripe.width, stripe.depth);
+			return shortSide >= layout.tileSize * 0.06 && longSide / shortSide <= 6;
+		});
 
 		expect({
 			centerDashes: decorations.centerDashes.length,
@@ -156,6 +160,7 @@ describe('road surface', () => {
 			visibleStripeGaps: eastStripeGaps.every((gap) => gap >= 0.24),
 			eastWestStripesSpanRoad,
 			northSouthStripesSpanRoad,
+			pedestrianSizedStripes,
 		}).toEqual({
 			centerDashes: 0,
 			crosswalkStripes: 20,
@@ -164,6 +169,7 @@ describe('road surface', () => {
 			visibleStripeGaps: true,
 			eastWestStripesSpanRoad: true,
 			northSouthStripesSpanRoad: true,
+			pedestrianSizedStripes: true,
 		});
 	});
 
