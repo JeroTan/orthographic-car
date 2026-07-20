@@ -12,7 +12,7 @@ export interface ProjectedCarPoint {
 	z: number;
 }
 
-const SCREEN_PADDING = 0.025;
+const SCREEN_PADDING = 0.015;
 
 export function buildingOccludesCar(
 	building: ProjectedBuildingBounds,

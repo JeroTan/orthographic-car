@@ -33,11 +33,8 @@ interface TransformScratch {
 	euler: THREE.Euler;
 	scale: THREE.Vector3;
 	worldCenter: THREE.Vector3;
-	projectedCenter: THREE.Vector3;
-	projectedRadius: THREE.Vector3;
 	projectedCar: THREE.Vector3;
-	cameraRight: THREE.Vector3;
-	cameraUp: THREE.Vector3;
+	projectedCorners: THREE.Vector3[];
 }
 
 const VARIANT_COUNT = 6;
@@ -129,7 +126,11 @@ function createBuildingMaterial(
 		map: texture,
 		color,
 		transparent: true,
-		depthWrite: false,
+		// Keep depth writes enabled. Buildings render after opaque car meshes,
+		// so faded fragments still reveal car while solid fragments occlude it.
+		// Disabling depth writes makes every facade blend with its own backfaces,
+		// which produces the hollow/fragmented buildings seen in regression.
+		depthWrite: true,
 	});
 	material.onBeforeCompile = (shader) => {
 		shader.vertexShader = shader.vertexShader
@@ -164,8 +165,6 @@ function updateInstances(
 	scratch: TransformScratch,
 ): void {
 	scratch.projectedCar.set(carPosition.x, 0.85, carPosition.z).project(camera);
-	scratch.cameraRight.setFromMatrixColumn(camera.matrixWorld, 0).normalize();
-	scratch.cameraUp.setFromMatrixColumn(camera.matrixWorld, 1).normalize();
 	for (const variantInstances of instances) {
 		for (let index = 0; index < variantInstances.placements.length; index += 1) {
 			const building = variantInstances.placements[index];
@@ -181,23 +180,36 @@ function updateInstances(
 			variantInstances.mesh.setMatrixAt(index, scratch.matrix);
 
 			scratch.worldCenter.copy(scratch.position);
-			scratch.projectedCenter.copy(scratch.worldCenter).project(camera);
-			const radius = variantInstances.packed.halfExtent.length() * modelScale;
-			const projectedRadiusX = scratch.projectedRadius
-				.copy(scratch.worldCenter)
-				.addScaledVector(scratch.cameraRight, radius)
-				.project(camera);
-			const projectedRadiusY = scratch.projectedRadius
-				.copy(scratch.worldCenter)
-				.addScaledVector(scratch.cameraUp, radius)
-				.project(camera);
+			let minX = Infinity;
+			let maxX = -Infinity;
+			let minY = Infinity;
+			let maxY = -Infinity;
+			let minZ = Infinity;
+			let maxZ = -Infinity;
+			for (let cornerIndex = 0; cornerIndex < 8; cornerIndex += 1) {
+				const corner = scratch.projectedCorners[cornerIndex]
+					.set(
+						(cornerIndex & 1 ? 1 : -1) * scratch.scale.x,
+						(cornerIndex & 2 ? 1 : -1) * scratch.scale.y,
+						(cornerIndex & 4 ? 1 : -1) * scratch.scale.z,
+					)
+					.applyQuaternion(scratch.rotation)
+					.add(scratch.worldCenter)
+					.project(camera);
+				minX = Math.min(minX, corner.x);
+				maxX = Math.max(maxX, corner.x);
+				minY = Math.min(minY, corner.y);
+				maxY = Math.max(maxY, corner.y);
+				minZ = Math.min(minZ, corner.z);
+				maxZ = Math.max(maxZ, corner.z);
+			}
 			const occluded = buildingOccludesCar(
 				{
-					x: scratch.projectedCenter.x,
-					y: scratch.projectedCenter.y,
-					z: scratch.projectedCenter.z,
-					radiusX: Math.abs(projectedRadiusX.x - scratch.projectedCenter.x),
-					radiusY: Math.abs(projectedRadiusY.y - scratch.projectedCenter.y),
+					x: (minX + maxX) / 2,
+					y: (minY + maxY) / 2,
+					z: (minZ + maxZ) / 2,
+					radiusX: (maxX - minX) / 2,
+					radiusY: (maxY - minY) / 2,
 				},
 				{
 					x: scratch.projectedCar.x,
@@ -235,11 +247,8 @@ export function addBuildingView(
 		euler: new THREE.Euler(),
 		scale: new THREE.Vector3(),
 		worldCenter: new THREE.Vector3(),
-		projectedCenter: new THREE.Vector3(),
-		projectedRadius: new THREE.Vector3(),
 		projectedCar: new THREE.Vector3(),
-		cameraRight: new THREE.Vector3(),
-		cameraUp: new THREE.Vector3(),
+		projectedCorners: Array.from({ length: 8 }, () => new THREE.Vector3()),
 	};
 	void Promise.all([
 		fetch(buildingModelUrl),
