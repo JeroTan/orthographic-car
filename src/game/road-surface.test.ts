@@ -118,7 +118,7 @@ describe('road surface', () => {
 		});
 	});
 
-	it('adds approach-edge crosswalk stripes at a four-way intersection', () => {
+	it('adds separated crosswalk stripes outside a four-way intersection', () => {
 		const decorations = buildRoadDecorations(
 			roadLayout(
 				[
@@ -131,15 +131,29 @@ describe('road surface', () => {
 				5,
 			),
 		);
-		const approachEdgeBars = decorations.crosswalkStripes.every(
-			(stripe) => Math.max(Math.abs(stripe.x), Math.abs(stripe.z)) >= 3.1,
+		const approachEdgeBars = decorations.crosswalkStripes.every((stripe) =>
+			Math.max(Math.abs(stripe.x), Math.abs(stripe.z)) >= 4.2,
 		);
+		const eastStripes = decorations.crosswalkStripes
+			.filter((stripe) => stripe.x > 0)
+			.sort((first, second) => first.x - second.x);
+		const eastStripeGaps = eastStripes
+			.slice(1)
+			.map((stripe, index) => stripe.x - eastStripes[index].x);
 
 		expect({
 			centerDashes: decorations.centerDashes.length,
 			crosswalkStripes: decorations.crosswalkStripes.length,
 			approachEdgeBars,
-		}).toEqual({ centerDashes: 0, crosswalkStripes: 16, approachEdgeBars: true });
+			eastStripeCount: eastStripes.length,
+			visibleStripeGaps: eastStripeGaps.every((gap) => gap >= 0.24),
+		}).toEqual({
+			centerDashes: 0,
+			crosswalkStripes: 20,
+			approachEdgeBars: true,
+			eastStripeCount: 5,
+			visibleStripeGaps: true,
+		});
 	});
 
 	it('follows rounded road joins with curved edge markings and pavement', () => {

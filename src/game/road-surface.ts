@@ -34,6 +34,7 @@ export interface RoadDecorationData {
 }
 
 const ROAD_CORNER_SEGMENTS = 8;
+const CROSSWALK_STRIPE_COUNT = 5;
 
 function roadTileKey(layout: RoadLayout, x: number, z: number): number {
 	return z * layout.gridSize + x;
@@ -134,9 +135,10 @@ export function buildRoadDecorations(layout: RoadLayout): RoadDecorationData {
 		if (connectedDirections.filter((direction) => direction.connected).length >= 3) {
 			for (const direction of connectedDirections) {
 				if (!direction.connected) continue;
-				for (let stripe = 0; stripe < 4; stripe += 1) {
+				for (let stripe = 0; stripe < CROSSWALK_STRIPE_COUNT; stripe += 1) {
 					const distanceFromCenter =
-						halfTile - layout.tileSize * 0.069 - (stripe - 1.5) * layout.tileSize * 0.02;
+						halfTile + layout.tileSize * 0.12 -
+							(stripe - (CROSSWALK_STRIPE_COUNT - 1) / 2) * layout.tileSize * 0.045;
 					crosswalkStripes.push({
 						x: centerX + direction.x * distanceFromCenter,
 						z: centerZ + direction.z * distanceFromCenter,
