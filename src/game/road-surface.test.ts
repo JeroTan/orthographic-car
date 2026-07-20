@@ -140,12 +140,12 @@ describe('road surface', () => {
 		const eastStripeGaps = eastStripes
 			.slice(1)
 			.map((stripe, index) => stripe.x - eastStripes[index].x);
-		const eastWestStripesAreVertical = eastStripes.every(
-			(stripe) => stripe.width > stripe.depth,
+		const eastWestStripesSpanRoad = eastStripes.every(
+			(stripe) => stripe.depth > stripe.width,
 		);
 		const northSouthStripes = decorations.crosswalkStripes.filter((stripe) => stripe.z > 0);
-		const northSouthStripesAreHorizontal = northSouthStripes.every(
-			(stripe) => stripe.depth > stripe.width,
+		const northSouthStripesSpanRoad = northSouthStripes.every(
+			(stripe) => stripe.width > stripe.depth,
 		);
 
 		expect({
@@ -154,16 +154,16 @@ describe('road surface', () => {
 			approachEdgeBars,
 			eastStripeCount: eastStripes.length,
 			visibleStripeGaps: eastStripeGaps.every((gap) => gap >= 0.24),
-			eastWestStripesAreVertical,
-			northSouthStripesAreHorizontal,
+			eastWestStripesSpanRoad,
+			northSouthStripesSpanRoad,
 		}).toEqual({
 			centerDashes: 0,
 			crosswalkStripes: 20,
 			approachEdgeBars: true,
 			eastStripeCount: 5,
 			visibleStripeGaps: true,
-			eastWestStripesAreVertical: true,
-			northSouthStripesAreHorizontal: true,
+			eastWestStripesSpanRoad: true,
+			northSouthStripesSpanRoad: true,
 		});
 	});
 
