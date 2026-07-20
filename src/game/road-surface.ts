@@ -142,8 +142,8 @@ export function buildRoadDecorations(layout: RoadLayout): RoadDecorationData {
 					crosswalkStripes.push({
 						x: centerX + direction.x * distanceFromCenter,
 						z: centerZ + direction.z * distanceFromCenter,
-						width: direction.x === 0 ? layout.tileSize * 0.62 : lineThickness * 1.7,
-						depth: direction.z === 0 ? layout.tileSize * 0.62 : lineThickness * 1.7,
+						width: direction.x === 0 ? lineThickness * 1.7 : layout.tileSize * 0.62,
+						depth: direction.z === 0 ? lineThickness * 1.7 : layout.tileSize * 0.62,
 					});
 				}
 			}
