@@ -145,12 +145,12 @@ export function buildRoadDecorations(layout: RoadLayout): RoadDecorationData {
 			for (const direction of connectedDirections) {
 				if (!direction.connected) continue;
 				for (let stripe = 0; stripe < CROSSWALK_STRIPE_COUNT; stripe += 1) {
-					const distanceFromCenter =
-						halfTile + crosswalkApproachOffset -
-							(stripe - (CROSSWALK_STRIPE_COUNT - 1) / 2) * crosswalkStripeSpacing;
+					const approachDistance = halfTile + crosswalkApproachOffset;
+					const crossLaneOffset =
+						(stripe - (CROSSWALK_STRIPE_COUNT - 1) / 2) * crosswalkStripeSpacing;
 					crosswalkStripes.push({
-						x: centerX + direction.x * distanceFromCenter,
-						z: centerZ + direction.z * distanceFromCenter,
+						x: centerX + direction.x * approachDistance - direction.z * crossLaneOffset,
+						z: centerZ + direction.z * approachDistance + direction.x * crossLaneOffset,
 						rotation: CROSSWALK_STRIPE_ROTATION,
 						// Rotate base rectangle into rendered pedestrian-lane orientation.
 						width: direction.x === 0 ? crosswalkStripeLength : crosswalkStripeThickness,

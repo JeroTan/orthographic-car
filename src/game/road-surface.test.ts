@@ -134,12 +134,15 @@ describe('road surface', () => {
 			Math.max(Math.abs(stripe.x), Math.abs(stripe.z)) >= 4.2,
 		);
 		const eastStripes = decorations.crosswalkStripes
-			.filter((stripe) => stripe.x > 0)
-			.sort((first, second) => first.x - second.x);
+			.filter((stripe) => stripe.x > 4.2)
+			.sort((first, second) => first.z - second.z);
 		const eastStripeGaps = eastStripes
 			.slice(1)
-			.map((stripe, index) => stripe.x - eastStripes[index].x);
-		const northSouthStripes = decorations.crosswalkStripes.filter((stripe) => stripe.z > 0);
+			.map((stripe, index) => stripe.z - eastStripes[index].z);
+		const eastStripesShareRoadAnchor = eastStripes.every(
+			(stripe) => Math.abs(stripe.x - eastStripes[0].x) < 0.001,
+		);
+		const northSouthStripes = decorations.crosswalkStripes.filter((stripe) => stripe.z > 4.2);
 		const renderedDimensions = (stripe: (typeof decorations.crosswalkStripes)[number]) =>
 			Math.abs(Math.sin(stripe.rotation ?? 0)) > 0.5
 				? { width: stripe.depth, depth: stripe.width }
@@ -166,7 +169,8 @@ describe('road surface', () => {
 			crosswalkStripes: decorations.crosswalkStripes.length,
 			approachEdgeBars,
 			eastStripeCount: eastStripes.length,
-			visibleStripeGaps: eastStripeGaps.every((gap) => gap >= 0.24),
+			eastStripesShareRoadAnchor,
+			visibleStripeGaps: eastStripeGaps.every((gap) => gap >= layout.tileSize * 0.1),
 			eastWestStripesRenderAcrossLane,
 			northSouthStripesRenderAcrossLane,
 			pedestrianSizedStripes,
@@ -176,6 +180,7 @@ describe('road surface', () => {
 			crosswalkStripes: 20,
 			approachEdgeBars: true,
 			eastStripeCount: 5,
+			eastStripesShareRoadAnchor: true,
 			visibleStripeGaps: true,
 			eastWestStripesRenderAcrossLane: true,
 			northSouthStripesRenderAcrossLane: true,
