@@ -158,7 +158,11 @@ describe('road surface', () => {
 		const pedestrianSizedStripes = decorations.crosswalkStripes.every((stripe) => {
 			const longSide = Math.max(stripe.width, stripe.depth);
 			const shortSide = Math.min(stripe.width, stripe.depth);
-			return shortSide >= layout.tileSize * 0.06 && longSide / shortSide <= 6;
+			return (
+				shortSide >= layout.tileSize * 0.04 &&
+				shortSide < layout.tileSize * 0.06 &&
+				longSide / shortSide <= 7
+			);
 		});
 		const rotatedForPedestrianLane = decorations.crosswalkStripes.every(
 			(stripe) => Math.abs((stripe.rotation ?? 0) - Math.PI / 2) < 0.001,
@@ -177,9 +181,9 @@ describe('road surface', () => {
 			rotatedForPedestrianLane,
 		}).toEqual({
 			centerDashes: 0,
-			crosswalkStripes: 20,
+			crosswalkStripes: 28,
 			approachEdgeBars: true,
-			eastStripeCount: 5,
+			eastStripeCount: 7,
 			eastStripesShareRoadAnchor: true,
 			visibleStripeGaps: true,
 			eastWestStripesRenderAcrossLane: true,
