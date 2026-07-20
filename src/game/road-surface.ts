@@ -135,7 +135,8 @@ export function buildRoadDecorations(layout: RoadLayout): RoadDecorationData {
 			for (const direction of connectedDirections) {
 				if (!direction.connected) continue;
 				for (let stripe = 0; stripe < 4; stripe += 1) {
-					const distanceFromCenter = halfTile - layout.tileSize * (0.08 + stripe * 0.05);
+					const distanceFromCenter =
+						halfTile - layout.tileSize * 0.069 - (stripe - 1.5) * layout.tileSize * 0.02;
 					crosswalkStripes.push({
 						x: centerX + direction.x * distanceFromCenter,
 						z: centerZ + direction.z * distanceFromCenter,
