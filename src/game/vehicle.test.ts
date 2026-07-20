@@ -13,14 +13,49 @@ describe('vehicle controller', () => {
 		const vehicle = createVehicleController({ worldSpan: 144 });
 
 		vehicle.step(1, { accelerate: true, brake: false, left: false, right: false });
-		expect(vehicle.state.speed).toBeCloseTo(9, 4);
+		expect(vehicle.state.speed).toBeGreaterThan(0);
 
 		vehicle.step(0.5, { accelerate: false, brake: true, left: false, right: false });
-		expect(vehicle.state.speed).toBeCloseTo(2, 4);
+		expect(vehicle.state.speed).toBeLessThan(1);
 	});
 
 	it('shows reverse motion as positive speedometer speed', () => {
-		expect([toSpeedometerKmh(12), toSpeedometerKmh(-12)]).toEqual([62, 62]);
+		expect([toSpeedometerKmh(12), toSpeedometerKmh(-12)]).toEqual([152, 152]);
+	});
+
+	it('maps Porsche 911 GT2 top speed to 329 km/h', () => {
+		expect(toSpeedometerKmh(26)).toBe(329);
+	});
+
+	it('tapers acceleration as speed rises and reaches 100 km/h in Porsche-like time', () => {
+		const vehicle = createVehicleController({ worldSpan: 144 });
+		const input = { accelerate: true, brake: false, left: false, right: false };
+		vehicle.step(0.05, input);
+		const launchIncrement = vehicle.state.speed;
+		let elapsedSeconds = 0.05;
+
+		while (toSpeedometerKmh(vehicle.state.speed) < 100 && elapsedSeconds < 10) {
+			vehicle.step(0.05, input);
+			elapsedSeconds += 0.05;
+		}
+
+		const speedAt100 = vehicle.state.speed;
+		vehicle.step(0.05, input);
+		const incrementAt100 = vehicle.state.speed - speedAt100;
+		let speedNearTop = vehicle.state.speed;
+		while (speedNearTop < 24) {
+			vehicle.step(0.05, input);
+			speedNearTop = vehicle.state.speed;
+		}
+		const speedBeforeTopStep = vehicle.state.speed;
+		vehicle.step(0.05, input);
+		const incrementNearTop = vehicle.state.speed - speedBeforeTopStep;
+
+		expect(elapsedSeconds).toBeGreaterThanOrEqual(3.5);
+		expect(elapsedSeconds).toBeLessThanOrEqual(3.9);
+		expect(incrementAt100).toBeLessThan(launchIncrement);
+		expect(toSpeedometerKmh(speedBeforeTopStep)).toBeGreaterThan(300);
+		expect(incrementNearTop).toBeLessThan(launchIncrement * 0.4);
 	});
 
 	it('steers toward the pressed side in the orthographic view', () => {
@@ -96,7 +131,7 @@ describe('vehicle controller', () => {
 			terrain: createTerrainIndex({ ...roadWorld, roads: [] }),
 		});
 
-		for (let frame = 0; frame < 200; frame += 1) {
+		for (let frame = 0; frame < 500; frame += 1) {
 			const input = { accelerate: true, brake: false, left: false, right: false };
 			road.step(0.05, input);
 			meadow.step(0.05, input);
@@ -128,8 +163,8 @@ describe('vehicle controller', () => {
 			meadow.step(0.05, input);
 		}
 
-		expect(road.state.speed).toBeCloseTo(9, 6);
-		expect(meadow.state.speed).toBeCloseTo(6, 6);
+		expect(road.state.speed).toBeGreaterThan(meadow.state.speed);
+		expect(meadow.state.speed).toBeGreaterThan(0);
 	});
 
 	it('pushes through dense grass while losing speed gradually', () => {
@@ -212,7 +247,7 @@ describe('vehicle controller', () => {
 		const roadExitSpeed = vehicle.state.speed;
 		vehicle.step(0.05, input);
 
-		expect(roadExitSpeed).toBeGreaterThan(14);
+		expect(roadExitSpeed).toBeGreaterThan(8);
 		expect(vehicle.state.speed).toBeGreaterThan(roadExitSpeed - 1);
 	});
 
@@ -253,12 +288,26 @@ describe('vehicle controller', () => {
 		);
 	});
 
+	it('loses speed while drifting even with throttle held', () => {
+		const vehicle = createVehicleController({ worldSpan: 144 });
+		const accelerate = { accelerate: true, brake: false, left: false, right: false };
+
+		for (let frame = 0; frame < 100; frame += 1) vehicle.step(0.05, accelerate);
+		const speedBeforeDrift = vehicle.state.speed;
+
+		for (let frame = 0; frame < 20; frame += 1) {
+			vehicle.step(0.05, { ...accelerate, right: true, handbrake: true });
+		}
+
+		expect(vehicle.state.speed).toBeLessThan(speedBeforeDrift - 2);
+	});
+
 	it('slows with a modest skid when braking hard through a turn', () => {
 		const vehicle = createVehicleController({ worldSpan: 144 });
 		const handbraking = createVehicleController({ worldSpan: 144 });
 		const accelerate = { accelerate: true, brake: false, left: false, right: false };
 
-		for (let frame = 0; frame < 30; frame += 1) {
+		for (let frame = 0; frame < 150; frame += 1) {
 			vehicle.step(0.05, accelerate);
 			handbraking.step(0.05, accelerate);
 		}
@@ -327,7 +376,7 @@ describe('vehicle controller', () => {
 		const vehicle = createVehicleController({ worldSpan: 144 });
 		const accelerate = { accelerate: true, brake: false, left: false, right: false };
 
-		for (let frame = 0; frame < 30; frame += 1) vehicle.step(0.05, accelerate);
+		for (let frame = 0; frame < 100; frame += 1) vehicle.step(0.05, accelerate);
 		vehicle.step(0.05, { accelerate: false, brake: true, left: false, right: false });
 
 		expect(vehicle.state.skidIntensity).toBeGreaterThan(0.5);

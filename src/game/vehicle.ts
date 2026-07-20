@@ -39,8 +39,8 @@ interface VehicleConfig {
 	terrain?: TerrainQuery;
 }
 
-const ACCELERATION = 9;
-const MEADOW_ACCELERATION = 6;
+const ACCELERATION = 2.2;
+const MEADOW_ACCELERATION = 1.35;
 const BRAKING = 14;
 const REVERSE_ACCELERATION = 7;
 const MEADOW_REVERSE_ACCELERATION = 4.5;
@@ -61,9 +61,12 @@ const HANDBRAKE_YAW_BOOST = 1.65;
 const ROAD_GRIP = 10;
 const BRAKING_REAR_GRIP = 4.5;
 const HANDBRAKE_REAR_GRIP = 1.2;
+const HANDBRAKE_THROTTLE_FACTOR = 0.25;
 const CAR_COLLISION_RADIUS = 1.25;
 const CAR_COLLISION_OFFSET = 1.1;
-const WORLD_SPEED_TO_KMH = 5.2;
+const SPEED_ACCELERATION_TAPER = 0.8;
+const SPEED_ACCELERATION_CURVE = 1.6;
+const WORLD_SPEED_TO_KMH = 12.65;
 
 export function toSpeedometerKmh(longitudinalSpeed: number): number {
 	return Math.round(Math.abs(longitudinalSpeed) * WORLD_SPEED_TO_KMH);
@@ -97,6 +100,11 @@ function coastTowardStop(speed: number, amount: number): number {
 	return 0;
 }
 
+function speedAccelerationFactor(speed: number, maxForwardSpeed: number): number {
+	const speedRatio = Math.max(0, Math.min(1, speed / maxForwardSpeed));
+	return 1 - SPEED_ACCELERATION_TAPER * Math.pow(speedRatio, SPEED_ACCELERATION_CURVE);
+}
+
 function updateLongitudinalSpeed(
 	speed: number,
 	deltaSeconds: number,
@@ -104,6 +112,10 @@ function updateLongitudinalSpeed(
 	handling: SurfaceHandling,
 ): number {
 	let nextSpeed = speed;
+	const driveAcceleration =
+		handling.acceleration *
+		speedAccelerationFactor(speed, handling.maxForwardSpeed) *
+		(input.handbrake ? HANDBRAKE_THROTTLE_FACTOR : 1);
 
 	if (input.accelerate && !input.brake) {
 		nextSpeed =
@@ -116,7 +128,7 @@ function updateLongitudinalSpeed(
 						)
 					: Math.min(
 							handling.maxForwardSpeed,
-							speed + handling.acceleration * deltaSeconds,
+							speed + driveAcceleration * deltaSeconds,
 						);
 	} else if (input.brake && !input.accelerate) {
 		nextSpeed =
