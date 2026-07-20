@@ -130,7 +130,7 @@ describe('procedural world', () => {
 	});
 
 	it('places varied buildings beside roads with open lots between them', () => {
-		const world = generateWorld(2607);
+		const world = generateWorld(6767);
 		const terrain = createTerrainIndex(world);
 		const distances = world.buildings.flatMap((building, index) =>
 			world.buildings.slice(index + 1).map((other) => {
@@ -153,7 +153,7 @@ describe('procedural world', () => {
 		expect({
 			count: world.buildings.length,
 			variantCount: new Set(world.buildings.map((building) => building.variant)).size,
-			repeatable: generateWorld(2607).buildings,
+			repeatable: generateWorld(6767).buildings,
 			minimumSpacing: Math.min(...distances),
 			allNearRoads: world.buildings.every((building) =>
 				cardinalDirections.some((direction) =>
@@ -180,7 +180,7 @@ describe('procedural world', () => {
 	});
 
 	it('keeps different generated plans densely built', () => {
-		const buildingCounts = [1, 2, 3, 1337, 2607].map(
+		const buildingCounts = [1, 2, 3, 1337, 6767].map(
 			(seed) => generateWorld(seed).buildings.length,
 		);
 
@@ -246,7 +246,7 @@ describe('procedural world', () => {
 	});
 
 	it('treats residential buildings as solid scenery', () => {
-		const world = generateWorld(2607);
+		const world = generateWorld(6767);
 		const building = world.buildings[0];
 
 		expect(createCollisionIndex(world).intersectsCircle(building.x, building.z, 0.5)).toBe(
