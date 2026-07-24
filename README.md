@@ -14,6 +14,7 @@ Small procedural orthographic driving world. Built with Astro, Vue 3, and Three.
 - Roads allow quicker acceleration and higher speed; meadow travel is slower, and turning scrubs speed.
 - Rear-wheel drive produces launch slip and smoke. Hard braking and drifting leave fading tire trails.
 - **New map** regenerates roads and scenery from another seed.
+- Ten ambient placeholder vehicles (compact car, bike, van, SUV, and truck) drive seeded road routes. `createGameScene({ maxTrafficVehicles })` caps traffic at 24 for low-end hardware.
 
 ## Local development
 
@@ -49,6 +50,7 @@ Production build lands in `dist/`.
 - `src/game/scene.ts`: optimized Three.js renderer and low-poly scene.
 - `src/game/vehicle-view.ts`: car mesh animation plus bounded trail/smoke pools.
 - `src/game/vehicle.ts`: tested movement model.
+- `src/game/traffic.ts` and `src/game/traffic-view.ts`: deterministic road traffic simulation and low-poly placeholder vehicle views.
 - `src/game/world.ts`: tested seeded world generator.
 
 Performance choices: instanced repeated scenery/roads, fixed instanced pools for trails/smoke, shared geometry/materials, low-poly meshes, no shadows, no postprocessing, low-power WebGL preference, 1× pixel-ratio cap, lazy Three.js loading, and full render-loop pause while idle or hidden.

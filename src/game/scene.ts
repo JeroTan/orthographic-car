@@ -5,6 +5,8 @@ import { addGrassView } from './grass-view';
 import { buildRoadDecorations, buildRoadSurface, type RoadDecorationRect } from './road-surface';
 import { createVehicleController, type VehicleInput } from './vehicle';
 import { addVehicleView } from './vehicle-view';
+import { addTrafficView, type TrafficView } from './traffic-view';
+import { DEFAULT_TRAFFIC_VEHICLE_COUNT } from './traffic';
 import { DEFAULT_PORSCHE_COLOR, type PorscheColor } from './porsche-colors';
 import {
 	createCollisionIndex,
@@ -26,6 +28,7 @@ export interface GameTelemetry {
 export interface GameSceneOptions {
 	seed: number;
 	carColor?: PorscheColor;
+	maxTrafficVehicles?: number;
 	readInput: () => VehicleInput;
 	onTelemetry: (telemetry: GameTelemetry) => void;
 }
@@ -371,6 +374,12 @@ export function createGameScene(container: HTMLElement, options: GameSceneOption
 		() => startLoop(),
 		options.carColor ?? DEFAULT_PORSCHE_COLOR,
 	);
+	const trafficView: TrafficView = addTrafficView(
+		scene,
+		layout,
+		options.seed,
+		options.maxTrafficVehicles ?? DEFAULT_TRAFFIC_VEHICLE_COUNT,
+	);
 	let destroyed = false;
 	let lastTime = performance.now();
 	let telemetryElapsed = 0;
@@ -405,6 +414,7 @@ export function createGameScene(container: HTMLElement, options: GameSceneOption
 		controller.step(delta, input);
 		const { state } = controller;
 		const effectsActive = vehicleView.update(delta, state);
+		trafficView.update(delta, state);
 		camera.position.set(state.x + CAMERA_OFFSET, CAMERA_HEIGHT, state.z - CAMERA_OFFSET);
 		camera.lookAt(state.x, 0, state.z);
 		camera.updateMatrixWorld();
@@ -457,6 +467,7 @@ export function createGameScene(container: HTMLElement, options: GameSceneOption
 			destroyed = true;
 			stopLoop();
 			vehicleView.destroy();
+			trafficView.destroy();
 			buildingView.destroy();
 			grassView.destroy();
 			document.removeEventListener('visibilitychange', handleVisibilityChange);
