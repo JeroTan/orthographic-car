@@ -154,6 +154,95 @@ function addParallelGrid(roadTiles: Set<number>, random: () => number): void {
 	addVerticalRoad(roadTiles, randomOuterRoad(random), 0, WORLD_GRID_SIZE - 1);
 }
 
+function roadBlockAt(roadTiles: ReadonlySet<number>, x: number, z: number): boolean {
+	return [
+		[x, z],
+		[x + 1, z],
+		[x, z + 1],
+		[x + 1, z + 1],
+	].every(([tileX, tileZ]) => roadTiles.has(tileId(wrapTile(tileX), wrapTile(tileZ))));
+}
+
+function tryAddRoadSegment(
+	roadTiles: Set<number>,
+	coordinates: ReadonlyArray<readonly [number, number]>,
+): boolean {
+	const added = coordinates
+		.map(([x, z]) => tileId(wrapTile(x), wrapTile(z)))
+		.filter((id) => !roadTiles.has(id));
+	for (const id of added) roadTiles.add(id);
+
+	const createsBlock = added.some((id) => {
+		const x = id % WORLD_GRID_SIZE;
+		const z = Math.floor(id / WORLD_GRID_SIZE);
+		return [-1, 0].some((offsetX) =>
+			[-1, 0].some((offsetZ) => roadBlockAt(roadTiles, x + offsetX, z + offsetZ)),
+		);
+	});
+	if (!createsBlock) return true;
+
+	for (const id of added) roadTiles.delete(id);
+	return false;
+}
+
+function shuffledRange(random: () => number, minimum: number, maximum: number): number[] {
+	const values = Array.from(
+		{ length: maximum - minimum + 1 },
+		(_, index) => minimum + index,
+	);
+	for (let index = values.length - 1; index > 0; index -= 1) {
+		const swapIndex = Math.floor(random() * (index + 1));
+		[values[index], values[swapIndex]] = [values[swapIndex], values[index]];
+	}
+	return values;
+}
+
+function tryAddHorizontalArterial(
+	roadTiles: Set<number>,
+	random: () => number,
+	minimum: number,
+	maximum: number,
+): boolean {
+	for (const z of shuffledRange(random, minimum, maximum)) {
+		const coordinates = Array.from(
+			{ length: WORLD_GRID_SIZE },
+			(_, x) => [x, z] as const,
+		);
+		if (tryAddRoadSegment(roadTiles, coordinates)) return true;
+	}
+	return false;
+}
+
+function tryAddVerticalArterial(
+	roadTiles: Set<number>,
+	random: () => number,
+	minimum: number,
+	maximum: number,
+): boolean {
+	for (const x of shuffledRange(random, minimum, maximum)) {
+		const coordinates = Array.from(
+			{ length: WORLD_GRID_SIZE },
+			(_, z) => [x, z] as const,
+		);
+		if (tryAddRoadSegment(roadTiles, coordinates)) return true;
+	}
+	return false;
+}
+
+function addSecondaryArterials(roadTiles: Set<number>, random: () => number): void {
+	const boundaryMinimum = Math.max(1, Math.floor(WORLD_GRID_SIZE * 0.18));
+	const boundaryMaximum = Math.max(boundaryMinimum, Math.floor(WORLD_GRID_SIZE * 0.3));
+	const oppositeMinimum = WORLD_GRID_SIZE - 1 - boundaryMaximum;
+	const oppositeMaximum = WORLD_GRID_SIZE - 1 - boundaryMinimum;
+
+	// Retry alternate bands when seeded collector segments would create a 2×2
+	// asphalt block. Keep each side balanced so every plan gets readable blocks.
+	tryAddHorizontalArterial(roadTiles, random, boundaryMinimum, boundaryMaximum);
+	tryAddHorizontalArterial(roadTiles, random, oppositeMinimum, oppositeMaximum);
+	tryAddVerticalArterial(roadTiles, random, boundaryMinimum, boundaryMaximum);
+	tryAddVerticalArterial(roadTiles, random, oppositeMinimum, oppositeMaximum);
+}
+
 function addCornerBlock(roadTiles: Set<number>, outerX: number, outerZ: number): void {
 	const anchor = WORLD_GRID_SIZE / 2;
 	addHorizontalRoad(roadTiles, outerZ, Math.min(outerX, anchor), Math.max(outerX, anchor));
@@ -308,6 +397,7 @@ export function generateWorld(seed: number): WorldLayout {
 	if (roadFamily === 0) addCollectorLoop(roadTiles, roadRandom);
 	else if (roadFamily === 1) addParallelGrid(roadTiles, roadRandom);
 	else addStaggeredBlocks(roadTiles, roadRandom);
+	addSecondaryArterials(roadTiles, roadRandom);
 
 	const roads = [...roadTiles].map((id) => {
 		return { x: id % WORLD_GRID_SIZE, z: Math.floor(id / WORLD_GRID_SIZE) };

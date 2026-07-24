@@ -299,6 +299,21 @@ export function getRoadCornerJoins(layout: RoadLayout): RoadCornerJoin[] {
 export function createRoadSurfaceQuery(layout: RoadLayout): RoadSurfaceQuery {
 	const roadTiles = roadTileSet(layout);
 	const joins = getRoadCornerJoins(layout);
+	const joinBuckets = new Map<number, RoadCornerJoin[]>();
+	for (const join of joins) {
+		const tileX = wrapGridIndex(
+			Math.floor((wrapCoordinate(join.x, layout.worldSpan) + layout.worldSpan / 2) / layout.tileSize),
+			layout.gridSize,
+		);
+		const tileZ = wrapGridIndex(
+			Math.floor((wrapCoordinate(join.z, layout.worldSpan) + layout.worldSpan / 2) / layout.tileSize),
+			layout.gridSize,
+		);
+		const key = roadTileKey(layout, tileX, tileZ);
+		const bucket = joinBuckets.get(key) ?? [];
+		bucket.push(join);
+		joinBuckets.set(key, bucket);
+	}
 
 	return {
 		containsPoint(x, z) {
@@ -308,15 +323,27 @@ export function createRoadSurfaceQuery(layout: RoadLayout): RoadSurfaceQuery {
 			const tileZ = Math.floor((wrappedZ + layout.worldSpan / 2) / layout.tileSize);
 			if (roadTiles.has(roadTileKey(layout, tileX, tileZ))) return true;
 
-			return joins.some((join) => {
-				const distanceX = wrappedDelta(wrappedX, join.x, layout.worldSpan) * join.directionX;
-				const distanceZ = wrappedDelta(wrappedZ, join.z, layout.worldSpan) * join.directionZ;
-				return (
-					distanceX >= 0 &&
-					distanceZ >= 0 &&
-					distanceX * distanceX + distanceZ * distanceZ <= join.depth * join.depth
-				);
-			});
+			for (let offsetZ = -1; offsetZ <= 1; offsetZ += 1) {
+				for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
+					const key = roadTileKey(
+						layout,
+						wrapGridIndex(tileX + offsetX, layout.gridSize),
+						wrapGridIndex(tileZ + offsetZ, layout.gridSize),
+					);
+					for (const join of joinBuckets.get(key) ?? []) {
+						const distanceX = wrappedDelta(wrappedX, join.x, layout.worldSpan) * join.directionX;
+						const distanceZ = wrappedDelta(wrappedZ, join.z, layout.worldSpan) * join.directionZ;
+						if (
+							distanceX >= 0 &&
+							distanceZ >= 0 &&
+							distanceX * distanceX + distanceZ * distanceZ <= join.depth * join.depth
+						) {
+							return true;
+						}
+					}
+				}
+			}
+			return false;
 		},
 	};
 }

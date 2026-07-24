@@ -96,7 +96,7 @@ describe('procedural world', () => {
 	it('fills expanded map with roads, buildings, grass, and props', () => {
 		const world = generateWorld(6767);
 
-		expect(world.roads.length).toBeGreaterThanOrEqual(world.gridSize * 3);
+		expect(world.roads.length).toBeGreaterThanOrEqual(world.gridSize * 4);
 		expect(world.buildings.length).toBeGreaterThanOrEqual(WORLD_BUILDING_MIN_COUNT);
 		expect(world.grass.length).toBeGreaterThan(4_000);
 		expect(world.props.length).toBeGreaterThan(200);
@@ -229,12 +229,12 @@ describe('procedural world', () => {
 			return {
 				connected: topology.connectedRoads === world.roads.length,
 				mainCorridorsPresent,
-				hasReadableJunctions: topology.junctions >= 4,
+				hasReadableJunctions: topology.junctions >= 12,
 				hasOnlyIntentionalTurns: topology.simpleTurns <= 4,
 				hasNoAsphaltBlocks: topology.roadBlocks === 0,
 				roadCountIsBounded:
-					world.roads.length >= world.gridSize * 2 - 1 &&
-					world.roads.length <= world.gridSize * 5,
+					world.roads.length >= world.gridSize * 4 &&
+					world.roads.length <= world.gridSize * 8,
 			};
 		});
 
