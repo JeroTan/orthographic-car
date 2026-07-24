@@ -66,7 +66,7 @@ describe('procedural world', () => {
 		};
 	}
 
-	it('creates a small map with roads and scenery', () => {
+	it('creates expanded map with roads and scenery', () => {
 		const world = generateWorld(1337);
 
 		expect({
@@ -76,9 +76,9 @@ describe('procedural world', () => {
 			hasRoads: world.roads.length > 0,
 			hasScenery: world.props.length > 0,
 		}).toEqual({
-			gridSize: 18,
+			gridSize: 24,
 			tileSize: 8,
-			worldSpan: 144,
+			worldSpan: 192,
 			hasRoads: true,
 			hasScenery: true,
 		});
@@ -202,7 +202,13 @@ describe('procedural world', () => {
 				{ length: world.gridSize },
 				(_, index) => index,
 			).every(
-				(index) => roads.has(tileKey(world, index, 9)) && roads.has(tileKey(world, 9, index)),
+				(index) => {
+					const anchor = world.gridSize / 2;
+					return (
+						roads.has(tileKey(world, index, anchor)) &&
+						roads.has(tileKey(world, anchor, index))
+					);
+				},
 			);
 
 			return {
@@ -211,7 +217,9 @@ describe('procedural world', () => {
 				hasReadableJunctions: topology.junctions >= 4,
 				hasOnlyIntentionalTurns: topology.simpleTurns <= 4,
 				hasNoAsphaltBlocks: topology.roadBlocks === 0,
-				roadCountIsBounded: world.roads.length >= 40 && world.roads.length <= 80,
+				roadCountIsBounded:
+					world.roads.length >= world.gridSize * 2 - 1 &&
+					world.roads.length <= world.gridSize * 5,
 			};
 		});
 

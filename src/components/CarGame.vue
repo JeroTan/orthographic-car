@@ -8,6 +8,7 @@ import {
   type PorscheColor,
 } from "../game/porsche-colors";
 import { toSpeedometerKmh, type VehicleInput } from "../game/vehicle";
+import { WORLD_GRID_SIZE } from "../game/world";
 
 type Control = keyof VehicleInput;
 
@@ -259,7 +260,7 @@ onUnmounted(() => {
     </section>
 
     <p class="world-note">
-      <span>18 × 18</span> tiles · wraps north, south, east &amp; west
+      <span>{{ WORLD_GRID_SIZE }} × {{ WORLD_GRID_SIZE }}</span> tiles · wraps north, south, east &amp; west
     </p>
 
     <div v-if="loadError" class="error-panel" role="alert">

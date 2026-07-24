@@ -1,6 +1,6 @@
 import { createRoadSurfaceQuery } from './road-surface';
 
-export const WORLD_GRID_SIZE = 18;
+export const WORLD_GRID_SIZE = 24;
 export const WORLD_TILE_SIZE = 8;
 export const WORLD_SPAN = WORLD_GRID_SIZE * WORLD_TILE_SIZE;
 export const REPEATED_WORLD_OFFSETS = [-1, 0, 1] as const;
@@ -113,11 +113,29 @@ function randomInteger(random: () => number, minimum: number, maximum: number): 
 	return minimum + Math.floor(random() * (maximum - minimum + 1));
 }
 
+function outerRoadBand(random: () => number): number {
+	const innerMinimum = Math.max(1, Math.floor(WORLD_GRID_SIZE * 0.18));
+	const innerMaximum = Math.max(innerMinimum, Math.floor(WORLD_GRID_SIZE * 0.34));
+	return random() < 0.5
+		? randomInteger(random, innerMinimum, innerMaximum)
+		: randomInteger(
+				random,
+				WORLD_GRID_SIZE - 1 - innerMaximum,
+				WORLD_GRID_SIZE - 1 - innerMinimum,
+			);
+}
+
+function collectorBoundary(random: () => number): number {
+	const minimum = Math.max(1, Math.floor(WORLD_GRID_SIZE * 0.18));
+	const maximum = Math.max(minimum, Math.floor(WORLD_GRID_SIZE * 0.3));
+	return randomInteger(random, minimum, maximum);
+}
+
 function addCollectorLoop(roadTiles: Set<number>, random: () => number): void {
-	const west = randomInteger(random, 3, 5);
-	const east = randomInteger(random, 12, 14);
-	const north = randomInteger(random, 3, 5);
-	const south = randomInteger(random, 12, 14);
+	const west = collectorBoundary(random);
+	const east = WORLD_GRID_SIZE - 1 - collectorBoundary(random);
+	const north = collectorBoundary(random);
+	const south = WORLD_GRID_SIZE - 1 - collectorBoundary(random);
 
 	addHorizontalRoad(roadTiles, north, west, east);
 	addHorizontalRoad(roadTiles, south, west, east);
@@ -126,7 +144,7 @@ function addCollectorLoop(roadTiles: Set<number>, random: () => number): void {
 }
 
 function randomOuterRoad(random: () => number): number {
-	return random() < 0.5 ? randomInteger(random, 3, 6) : randomInteger(random, 11, 14);
+	return outerRoadBand(random);
 }
 
 function addParallelGrid(roadTiles: Set<number>, random: () => number): void {
@@ -141,10 +159,10 @@ function addCornerBlock(roadTiles: Set<number>, outerX: number, outerZ: number):
 }
 
 function addStaggeredBlocks(roadTiles: Set<number>, random: () => number): void {
-	const west = randomInteger(random, 3, 6);
-	const east = randomInteger(random, 11, 14);
-	const north = randomInteger(random, 3, 6);
-	const south = randomInteger(random, 11, 14);
+	const west = collectorBoundary(random);
+	const east = WORLD_GRID_SIZE - 1 - collectorBoundary(random);
+	const north = collectorBoundary(random);
+	const south = WORLD_GRID_SIZE - 1 - collectorBoundary(random);
 
 	if (random() < 0.5) {
 		addCornerBlock(roadTiles, west, north);
