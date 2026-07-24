@@ -51,9 +51,14 @@ export const PORSCHE_MODEL_DIMENSIONS_WORLD = Object.freeze({
 	width: 2.156494,
 });
 
-/** World units now track car-sized metres instead of the old arcade scale. */
-export const WORLD_METERS_PER_UNIT =
-	PORSCHE_DIMENSIONS_METERS.length / PORSCHE_MODEL_DIMENSIONS_WORLD.length;
+/** Physical metres represented by one packed-model world unit on each axis. */
+export const PORSCHE_METERS_PER_WORLD_UNIT = Object.freeze({
+	length: PORSCHE_DIMENSIONS_METERS.length / PORSCHE_MODEL_DIMENSIONS_WORLD.length,
+	width: PORSCHE_DIMENSIONS_METERS.width / PORSCHE_MODEL_DIMENSIONS_WORLD.width,
+});
+
+/** Longitudinal world scale. Width scale feeds the collision footprint below. */
+export const WORLD_METERS_PER_UNIT = PORSCHE_METERS_PER_WORLD_UNIT.length;
 export const WORLD_SPEED_TO_KMH = WORLD_METERS_PER_UNIT * 3.6;
 const WORLD_UNITS_PER_METER = 1 / WORLD_METERS_PER_UNIT;
 
@@ -99,8 +104,14 @@ const ROAD_GRIP = 10;
 const BRAKING_REAR_GRIP = 4.5;
 const HANDBRAKE_REAR_GRIP = 1.2;
 const HANDBRAKE_THROTTLE_FACTOR = 0.25;
-const CAR_COLLISION_RADIUS = 1.25;
-const CAR_COLLISION_OFFSET = 1.1;
+const CAR_COLLISION_RADIUS =
+	(PORSCHE_DIMENSIONS_METERS.width / WORLD_METERS_PER_UNIT) / 2 + 0.2;
+const CAR_COLLISION_OFFSET = Math.max(
+	0,
+	PORSCHE_MODEL_DIMENSIONS_WORLD.length / 2 - CAR_COLLISION_RADIUS,
+);
+const COLLISION_SAMPLE_DISTANCE = CAR_COLLISION_RADIUS;
+const MAX_COLLISION_SAMPLES = 6;
 const SPEED_ACCELERATION_TAPER = 0.8;
 const SPEED_ACCELERATION_CURVE = 1.6;
 const LAUNCH_SLIP_SPEED = worldSpeedFromKmh(75.9);
@@ -260,6 +271,48 @@ function collidesAt(collision: CollisionQuery, x: number, z: number, heading: nu
 	);
 }
 
+function collidesAlongPath(
+	collision: CollisionQuery,
+	startX: number,
+	startZ: number,
+	endX: number,
+	endZ: number,
+	heading: number,
+	worldSpan: number,
+): boolean {
+	const rawDeltaX = endX - startX;
+	const rawDeltaZ = endZ - startZ;
+	const deltaX =
+		Math.abs(rawDeltaX) > worldSpan / 2
+			? rawDeltaX - Math.sign(rawDeltaX) * worldSpan
+			: rawDeltaX;
+	const deltaZ =
+		Math.abs(rawDeltaZ) > worldSpan / 2
+			? rawDeltaZ - Math.sign(rawDeltaZ) * worldSpan
+			: rawDeltaZ;
+	const travelDistance = Math.hypot(deltaX, deltaZ);
+	const sampleCount = Math.min(
+		MAX_COLLISION_SAMPLES,
+		Math.max(1, Math.ceil(travelDistance / COLLISION_SAMPLE_DISTANCE)),
+	);
+
+	for (let sample = 1; sample <= sampleCount; sample += 1) {
+		const progress = sample / sampleCount;
+		if (
+			collidesAt(
+				collision,
+				wrapCoordinate(startX + deltaX * progress, worldSpan),
+				wrapCoordinate(startZ + deltaZ * progress, worldSpan),
+				heading,
+			)
+		) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
 export function createVehicleController(config: VehicleConfig): VehicleController {
 	const state: VehicleState = {
 		x: 0,
@@ -326,7 +379,18 @@ export function createVehicleController(config: VehicleConfig): VehicleControlle
 				config.worldSpan,
 			);
 
-			if (config.collision && collidesAt(config.collision, nextX, nextZ, state.heading)) {
+			if (
+				config.collision &&
+				collidesAlongPath(
+					config.collision,
+					state.x,
+					state.z,
+					nextX,
+					nextZ,
+					state.heading,
+					config.worldSpan,
+				)
+			) {
 				state.speed = 0;
 				state.slipAngle = 0;
 				velocityX = 0;

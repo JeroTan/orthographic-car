@@ -25,7 +25,7 @@ The 991.2 sources use different acceleration standards: Porsche Newsroom gives 0
 
 ## Spatial calibration
 
-Porsche lists the 997 911 GT2 at 4,469 mm long and 1,852 mm wide ([Porsche Centre Langley vehicle specification](https://finder.porsche.com/ca/en-CA/details/porsche-911-gt2-preowned-XLWN6O)). The packed game asset measures about 4.908842 by 2.156494 world units after `MODEL_SCALE = 1.1`. `vehicle.ts` uses length as longitudinal scale: one world unit is `4.469 / 4.908842 = 0.9104 m` and one world-unit/second is `3.2774 km/h`.
+Porsche lists the 997 911 GT2 at 4,469 mm long and 1,852 mm wide ([Porsche Centre Langley vehicle specification](https://finder.porsche.com/ca/en-CA/details/porsche-911-gt2-preowned-XLWN6O)). The packed game asset measures about 4.908842 by 2.156494 world units after `MODEL_SCALE = 1.1`. `vehicle.ts` uses length as longitudinal scale: one world unit is `4.469 / 4.908842 = 0.9104 m` along travel and one world-unit/second is `3.2774 km/h`. Width scale is tracked separately (`1.852 / 2.156494 = 0.8588 m` per packed-model width unit) and feeds the two-circle collision footprint, so both body dimensions affect handling.
 
 At 20 km/h, controller now travels `6.102` world units/s: about `1.24` packed-car lengths each second. This keeps HUD speed and visible road travel tied to same metre scale; old `12.65 km/h` conversion made 20 km/h only `1.58` world units/s, less than half car length per second.
 
@@ -36,8 +36,8 @@ Current controller constants and conversion are in [`vehicle.ts`](../src/game/ve
 | Controller quantity | Calculation | Result |
 | --- | --- | ---: |
 | Road displayed top speed | `100.383 × 3.2774` | 329 km/h |
-| Meadow displayed top speed | `54.036 × 3.2774` | 177 km/h |
-| Road reverse displayed cap | `46.317 × 3.2774` | 152 km/h |
+| Meadow displayed top speed | `54.0057 × 3.2774` | 177 km/h |
+| Road reverse displayed cap | `46.3778 × 3.2774` | 152 km/h |
 | Road 0–100, straight and unobstructed | 0.05 s simulation steps with taper | ≈3.75 s |
 
 The 3.75 s result is an inference from current constants and the tested timestep, assuming no steering, terrain drag, collision, or frame-quantization effects beyond that timestep ([speed and acceleration constants](../src/game/vehicle.ts#L42-L112), [longitudinal update](../src/game/vehicle.ts#L143-L178)). It sits close to Porsche's published 997.1 GT2 range of 3.6–3.7 s and is slower than the 991.2 GT2 RS's 2.8 s figure ([Porsche GT2 history](https://www.porsche.com/stories/mobility/the-legend-of-the-porsche-911-gt2/), [Porsche Newsroom 2017](https://newsroom.porsche.com/en/products/porsche-911-gt2-rs-world-premiere-festival-of-speed-2017-goodwood-13892.html)). World units now use car-length calibration, so displayed speed also produces visible travel at expected scale.
@@ -54,7 +54,7 @@ Recommended tuning interpretation:
 
 - Keep normal road turning drag modest so high-grip rear-drive behavior retains momentum; current `15.44` calibrated units/s² is a visible cornering penalty at cap.
 - Reserve stronger loss for explicit handbrake input; current extra `23.16` calibrated units/s² makes drift readable and controllable, but lower it if drift exits feel like braking rather than sliding.
-- Preserve rear-slip effects during launch and handbrake turns. Porsche's rear-wheel-drive and UHP-tyre description supports the direction of those cues, while exact slip magnitude remains game design ([rear-drive / tyre details](https://newsroom.porsche.com/en/products/porsche-911-gt2-rs-world-premiere-festival-of-speed-2017-goodwood-13892.html), [rear-grip constants](../src/game/vehicle.ts#L61-L63)).
+- Preserve rear-slip effects during launch and handbrake turns. Porsche's rear-wheel-drive and UHP-tyre description supports the direction of those cues, while exact slip magnitude remains game design ([rear-drive / tyre details](https://newsroom.porsche.com/en/products/porsche-911-gt2-rs-world-premiere-festival-of-speed-2017-goodwood-13892.html), [rear-grip constants](../src/game/vehicle.ts#L98-L100)).
 - Validate any change against both speedometer target and corner exit feel; matching 0–100 alone does not validate drift behavior.
 
 ## Source list

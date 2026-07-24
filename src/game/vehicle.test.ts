@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	createVehicleController,
 	PORSCHE_DIMENSIONS_METERS,
+	PORSCHE_METERS_PER_WORLD_UNIT,
 	PORSCHE_MODEL_DIMENSIONS_WORLD,
 	toSpeedometerKmh,
 	toWorldSpeed,
@@ -39,7 +40,7 @@ describe('vehicle controller', () => {
 		expect(toSpeedometerKmh(toWorldSpeed(329))).toBe(329);
 	});
 
-	it('maps 20 km/h to more than one Porsche length per second', () => {
+	it('maps 20 km/h to calibrated Porsche dimensions', () => {
 		const worldSpeed = toWorldSpeed(20);
 		const metersPerSecond = worldSpeed * WORLD_METERS_PER_UNIT;
 		const carLengthsPerSecond = worldSpeed / PORSCHE_MODEL_DIMENSIONS_WORLD.length;
@@ -53,8 +54,22 @@ describe('vehicle controller', () => {
 			widthMeters: 1.852,
 			kmhPerWorldSpeed: WORLD_SPEED_TO_KMH,
 		});
+		expect(PORSCHE_METERS_PER_WORLD_UNIT.width).toBeCloseTo(
+			PORSCHE_DIMENSIONS_METERS.width / PORSCHE_MODEL_DIMENSIONS_WORLD.width,
+			6,
+		);
 		expect(metersPerSecond).toBeCloseTo(20 / 3.6, 6);
 		expect(carLengthsPerSecond).toBeGreaterThan(1);
+	});
+
+	it('moves more than one packed-car length in one second at 20 km/h', () => {
+		const vehicle = createVehicleController({ worldSpan: 144 });
+		vehicle.state.speed = toWorldSpeed(20);
+		const startZ = vehicle.state.z;
+
+		vehicle.step(1, { accelerate: true, brake: false, left: false, right: false });
+
+		expect(vehicle.state.z - startZ).toBeGreaterThan(PORSCHE_MODEL_DIMENSIONS_WORLD.length);
 	});
 
 	it('tapers acceleration as speed rises and reaches 100 km/h in Porsche-like time', () => {
@@ -142,6 +157,26 @@ describe('vehicle controller', () => {
 		}
 
 		expect(vehicle.state.z).toBeLessThan(6);
+	});
+
+	it('sweeps high-speed travel so scenery cannot be skipped between frames', () => {
+		const world = {
+			gridSize: 18,
+			tileSize: 8,
+			worldSpan: 144,
+			roads: [],
+			props: [{ kind: 'tree' as const, x: 2.3, z: 2.5, rotation: 0, scale: 1 }],
+		};
+		const vehicle = createVehicleController({
+			worldSpan: world.worldSpan,
+			collision: createCollisionIndex(world),
+		});
+		vehicle.state.speed = toWorldSpeed(329);
+
+		vehicle.step(0.05, { accelerate: false, brake: false, left: false, right: false });
+
+		expect(vehicle.state.z).toBe(0);
+		expect(vehicle.state.speed).toBe(0);
 	});
 
 	it('reaches a lower top speed on meadow than on road', () => {
