@@ -13,7 +13,7 @@ Audit date: 2026-07-20. Scope: original orthographic driving-world request.
 | Down/S decelerates, then reverses | Brake reduces forward speed to zero; keeping it held accelerates backward at a lower capped speed. | Vehicle tests verify braking rate and reverse movement after stopping. |
 | Random living environment | Seeded generator places trees, rocks, flowers, and cottages. Renderer adds road lamps. | `world.test.ts` verifies scenery exists and changes with seed. Visual capture confirms all prop types used by seed when present. |
 | Roads | Seeded urban grammar selects collector-loop, parallel-grid, or staggered-block family. Every family starts with straight east-west and north-south arterials across wrapped map seams, then adds only whole orthogonal segments: no sine sampling or staircase roads. Same seed reproduces same plan; “New map” can change both family and dimensions. Renderer uses supplied [`RoadTexture2.jpg`](../src/assets/roads/RoadTexture2.jpg) as actual asphalt map with an unlit material that preserves its neutral-gray color, one shared road geometry instanced across nine repeating maps, and compact eight-segment quarter-circle joins with an 18%-tile curb radius. Road terrain queries reuse same rounded footprint. | World test exercises one seed per grammar family and verifies three unique yet reproducible layouts, full connectivity, central arterials, readable junctions, no more than four intentional corners, zero 2×2 asphalt blocks, and bounded road counts. Road-surface tests verify compact rounded joins, terrain classification, and wrapped seams. Production build emits supplied 68,560-byte asphalt asset; headless render confirms neutral-gray textured asphalt. |
-| Procedural map | [`world.ts`](../src/game/world.ts) generates a 24×24 layout (192 world units) from seed. “New map” advances seed and rebuilds scene. | Tests verify 24×24/192-unit contract and different seeded outputs. |
+| Procedural map | [`world.ts`](../src/game/world.ts) generates a 64×64 layout (512 world units) from seed, with normalized road bands and expanded scenery counts. “New map” advances seed and rebuilds scene. | Tests verify 64×64/512-unit contract, content density, and different seeded outputs. |
 | Repeating overworld | Vehicle coordinates wrap inside world span. Scene instantiates 3×3 copies around playable map so camera never sees empty edge. | `vehicle.test.ts`: “wraps travel inside repeating world bounds.” Visual scene shows neighboring repeated content around camera. |
 | Environment collision | Vehicle uses two-circle footprint against toroidal collision index. Trees, rocks, cottages, and road lamps block movement; flowers remain pass-through. Collision stops penetration while steering and reverse remain available. | Vehicle test proves sustained acceleration cannot pass through tree. World test proves rendered roadside lamps share collision placement. |
 | Terrain and cornering speed | Porsche asset is calibrated against 4.469 m length and 1.852 m width. One world unit is 0.9104 m along travel; width scale feeds the collision footprint. At 20 km/h, controller moves 6.102 world units/s (1.24 packed-car lengths/s). Road travel tops out at 100.383 world units/s (329 displayed km/h); meadow travel accelerates more slowly and tops out at 54.006 (177 displayed km/h). Reverse is capped at 46.378 on roads and 27.155 on meadow. Forward acceleration tapers with speed to model gearing and aerodynamic load. Leaving road preserves momentum while meadow resistance reduces excess speed. Speed-proportional cornering drag slows sustained turns. | Vehicle tests compare calibrated dimensions, 20 km/h integration travel, road/meadow forward acceleration, Porsche-scale 0–100 timing, forward/reverse top speeds, smooth road-to-meadow transition, and turning versus equivalent straight travel. |
@@ -41,13 +41,13 @@ npm run build
 Audit result:
 
 - Astro diagnostics: 0 errors, 0 warnings, 0 hints.
-- Vitest: 6 files, 45 tests, all passing.
+- Vitest: 6 files, 46 tests, all passing.
 - Astro: one static page built into `dist/`.
 - Cloudflare runtime dependencies/config: none.
 
 ## Intentional limits
 
-- Map now uses 24×24 tiles (192×192 world units), expanded from the original 18×18 prototype.
+- Map now uses 64×64 tiles (512×512 world units), expanded from the original 18×18 prototype. Generation keeps road, building, grass, and prop counts bounded for potato hardware.
 - Driving is lightweight arcade movement, not full rigid-body physics.
 - Handling uses deterministic surface and cornering profiles, not tire-by-tire simulation.
 - Drift uses a lightweight bicycle-style velocity/slip model; effects use bounded GPU-instanced pools (48 trail marks, 24 smoke puffs).

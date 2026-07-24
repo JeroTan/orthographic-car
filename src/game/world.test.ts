@@ -5,6 +5,8 @@ import {
 	createTerrainIndex,
 	generateWorld,
 	getRoadsidePosts,
+	WORLD_BUILDING_MAX_COUNT,
+	WORLD_BUILDING_MIN_COUNT,
 	type WorldLayout,
 } from './world';
 
@@ -76,9 +78,9 @@ describe('procedural world', () => {
 			hasRoads: world.roads.length > 0,
 			hasScenery: world.props.length > 0,
 		}).toEqual({
-			gridSize: 24,
+			gridSize: 64,
 			tileSize: 8,
-			worldSpan: 192,
+			worldSpan: 512,
 			hasRoads: true,
 			hasScenery: true,
 		});
@@ -89,6 +91,15 @@ describe('procedural world', () => {
 		const secondWorld = generateWorld(7331);
 
 		expect(secondWorld.props).not.toEqual(firstWorld.props);
+	});
+
+	it('fills expanded map with roads, buildings, grass, and props', () => {
+		const world = generateWorld(6767);
+
+		expect(world.roads.length).toBeGreaterThanOrEqual(world.gridSize * 3);
+		expect(world.buildings.length).toBeGreaterThanOrEqual(WORLD_BUILDING_MIN_COUNT);
+		expect(world.grass.length).toBeGreaterThan(4_000);
+		expect(world.props.length).toBeGreaterThan(200);
 	});
 
 	it('fills meadow with deterministic grass while keeping asphalt clear', () => {
@@ -172,8 +183,8 @@ describe('procedural world', () => {
 			minimumSpacing: expect.any(Number),
 			allNearRoads: true,
 		});
-		expect(world.buildings.length).toBeGreaterThanOrEqual(18);
-		expect(world.buildings.length).toBeLessThanOrEqual(28);
+		expect(world.buildings.length).toBeGreaterThanOrEqual(WORLD_BUILDING_MIN_COUNT);
+		expect(world.buildings.length).toBeLessThanOrEqual(WORLD_BUILDING_MAX_COUNT);
 		expect(new Set(world.buildings.map((building) => building.variant)).size).toBeGreaterThanOrEqual(4);
 		expect(Math.min(...distances)).toBeGreaterThanOrEqual(6.5);
 		expect(Math.min(...distances)).toBeLessThan(9);
@@ -184,7 +195,11 @@ describe('procedural world', () => {
 			(seed) => generateWorld(seed).buildings.length,
 		);
 
-		expect(buildingCounts.every((count) => count >= 18 && count <= 28)).toBe(true);
+		expect(
+			buildingCounts.every(
+				(count) => count >= WORLD_BUILDING_MIN_COUNT && count <= WORLD_BUILDING_MAX_COUNT,
+			),
+		).toBe(true);
 	});
 
 	it('builds reproducible seed-dependent urban plans without zigzags or asphalt blobs', () => {

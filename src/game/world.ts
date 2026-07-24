@@ -1,9 +1,11 @@
 import { createRoadSurfaceQuery } from './road-surface';
 
-export const WORLD_GRID_SIZE = 24;
+export const WORLD_GRID_SIZE = 64;
 export const WORLD_TILE_SIZE = 8;
 export const WORLD_SPAN = WORLD_GRID_SIZE * WORLD_TILE_SIZE;
 export const REPEATED_WORLD_OFFSETS = [-1, 0, 1] as const;
+export const WORLD_BUILDING_MIN_COUNT = 48;
+export const WORLD_BUILDING_MAX_COUNT = 96;
 
 export interface TileCoordinate {
 	x: number;
@@ -188,14 +190,44 @@ function wrappedPointDistance(
 	);
 }
 
-function isNearBuilding(
-	buildings: readonly BuildingPlacement[],
-	point: WorldPoint,
-	clearance: number,
-): boolean {
-	return buildings.some(
-		(building) => wrappedPointDistance(building, point, WORLD_SPAN) < clearance,
+interface BuildingProximityIndex {
+	add(building: BuildingPlacement): void;
+	isNear(point: WorldPoint, clearance: number): boolean;
+}
+
+function buildingBucketIndex(value: number): number {
+	return Math.floor(
+		(wrapWorldCoordinate(value, WORLD_SPAN) + WORLD_SPAN / 2) / WORLD_TILE_SIZE,
 	);
+}
+
+function createBuildingProximityIndex(): BuildingProximityIndex {
+	const buckets = new Map<number, BuildingPlacement[]>();
+
+	return {
+		add(building) {
+			const key = tileId(buildingBucketIndex(building.x), buildingBucketIndex(building.z));
+			const bucket = buckets.get(key) ?? [];
+			bucket.push(building);
+			buckets.set(key, bucket);
+		},
+		isNear(point, clearance) {
+			const centerX = buildingBucketIndex(point.x);
+			const centerZ = buildingBucketIndex(point.z);
+			const bucketRadius = Math.ceil(clearance / WORLD_TILE_SIZE);
+
+			for (let offsetZ = -bucketRadius; offsetZ <= bucketRadius; offsetZ += 1) {
+				for (let offsetX = -bucketRadius; offsetX <= bucketRadius; offsetX += 1) {
+					const key = tileId(wrapTile(centerX + offsetX), wrapTile(centerZ + offsetZ));
+					for (const building of buckets.get(key) ?? []) {
+						if (wrappedPointDistance(building, point, WORLD_SPAN) < clearance) return true;
+					}
+				}
+			}
+
+			return false;
+		},
+	};
 }
 
 function generateBuildings(roadTiles: ReadonlySet<number>, seed: number): BuildingPlacement[] {
@@ -203,6 +235,7 @@ function generateBuildings(roadTiles: ReadonlySet<number>, seed: number): Buildi
 	const spacing = [6.5, 7, 7.5][Math.floor(random() * 3)];
 	const variantOffset = Math.floor(random() * 6);
 	const buildings: BuildingPlacement[] = [];
+	const buildingProximity = createBuildingProximityIndex();
 	const candidates: Array<BuildingPlacement & { roll: number }> = [];
 	const neighborDirections = [
 		{ x: 1, z: 0 },
@@ -231,20 +264,30 @@ function generateBuildings(roadTiles: ReadonlySet<number>, seed: number): Buildi
 	}
 
 	function place(candidate: BuildingPlacement & { roll: number }): void {
-		if (buildings.length >= 28 || isNearBuilding(buildings, candidate, spacing)) return;
-		buildings.push({
+		if (
+			buildings.length >= WORLD_BUILDING_MAX_COUNT ||
+			buildingProximity.isNear(candidate, spacing)
+		) {
+			return;
+		}
+		const building = {
 			variant: ((variantOffset + buildings.length) % 6) as BuildingVariant,
 			x: candidate.x,
 			z: candidate.z,
 			rotation: candidate.rotation,
 			scale: candidate.scale,
-		});
+		};
+		buildings.push(building);
+		buildingProximity.add(building);
 	}
 
+	// Randomized candidate order spreads buildings across full map instead of
+	// filling first rows and leaving central roads empty on larger maps.
+	candidates.sort((first, second) => first.roll - second.roll);
 	for (const candidate of candidates) {
 		if (candidate.roll < 0.78) place(candidate);
 	}
-	if (buildings.length < 18) {
+	if (buildings.length < WORLD_BUILDING_MIN_COUNT) {
 		for (const candidate of candidates) place(candidate);
 	}
 	return buildings;
@@ -272,6 +315,8 @@ export function generateWorld(seed: number): WorldLayout {
 	const buildings = generateBuildings(roadTiles, seed);
 	const grassRandom = createRandom(seed ^ 0x7f4a7c15);
 	const grass: GrassPlacement[] = [];
+	const buildingProximity = createBuildingProximityIndex();
+	for (const building of buildings) buildingProximity.add(building);
 	const roadSurface = createRoadSurfaceQuery({
 		gridSize: WORLD_GRID_SIZE,
 		tileSize: WORLD_TILE_SIZE,
@@ -282,10 +327,10 @@ export function generateWorld(seed: number): WorldLayout {
 		for (let x = 0; x < WORLD_GRID_SIZE; x += 1) {
 			if (roadTiles.has(tileId(x, z))) continue;
 
-			for (let patch = 0; patch < 4; patch += 1) {
+			for (let patch = 0; patch < 2; patch += 1) {
 				const grassX = tileToWorld(x) + (grassRandom() - 0.5) * WORLD_TILE_SIZE * 0.84;
 				const grassZ = tileToWorld(z) + (grassRandom() - 0.5) * WORLD_TILE_SIZE * 0.84;
-				if (isNearBuilding(buildings, { x: grassX, z: grassZ }, 5)) continue;
+				if (buildingProximity.isNear({ x: grassX, z: grassZ }, 5)) continue;
 				const kind: GrassKind = grassRandom() < 0.14 ? 'wild' : 'field';
 				const scale = 0.72 + grassRandom() * 0.58;
 				const clearance = grassPatchRadius(kind, scale) + 0.25;
@@ -332,7 +377,7 @@ export function generateWorld(seed: number): WorldLayout {
 			const jitter = kind === 'cottage' ? 0.08 : 0.26;
 			const propX = tileToWorld(x) + (random() - 0.5) * WORLD_TILE_SIZE * jitter;
 			const propZ = tileToWorld(z) + (random() - 0.5) * WORLD_TILE_SIZE * jitter;
-			if (isNearBuilding(buildings, { x: propX, z: propZ }, kind === 'cottage' ? 6 : 4.5)) {
+			if (buildingProximity.isNear({ x: propX, z: propZ }, kind === 'cottage' ? 6 : 4.5)) {
 				continue;
 			}
 			props.push({
