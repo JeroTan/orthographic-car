@@ -3,6 +3,12 @@ import {
 	type VehicleImpactBody,
 	type VehicleImpactEffect,
 } from './vehicle-impact';
+import {
+	applyVehicleCrashImpulse,
+	createVehicleCrashState,
+	stepVehicleCrashState,
+	type VehicleCrashState,
+} from './vehicle-crash';
 
 export type { VehicleImpactEffect } from './vehicle-impact';
 
@@ -14,7 +20,7 @@ export interface VehicleInput {
 	handbrake?: boolean;
 }
 
-export interface VehicleState {
+export interface VehicleState extends VehicleCrashState {
 	x: number;
 	z: number;
 	heading: number;
@@ -141,6 +147,14 @@ const IMPACT_GROUND_RESTITUTION = 0.28;
 const IMPACT_GROUND_STOP_SPEED = worldAccelerationFromMps2(0.8);
 const MAX_IMPACT_VERTICAL_SPEED = worldAccelerationFromMps2(9.5);
 const MAX_IMPACT_KNOCKBACK_SPEED = worldSpeedFromKmh(145);
+const IMPACT_AIR_VELOCITY_DAMPING = 0.35;
+const AIRBORNE_INPUT: VehicleInput = {
+	accelerate: false,
+	brake: false,
+	left: false,
+	right: false,
+	handbrake: false,
+};
 
 export function toSpeedometerKmh(longitudinalSpeed: number): number {
 	return Math.round(Math.abs(longitudinalSpeed) * WORLD_SPEED_TO_KMH);
@@ -353,6 +367,7 @@ export function createVehicleController(config: VehicleConfig): VehicleControlle
 		verticalVelocity: 0,
 		impactIntensity: 0,
 		damage: 0,
+		...createVehicleCrashState(),
 	};
 	let velocityX = 0;
 	let velocityZ = 0;
@@ -364,11 +379,12 @@ export function createVehicleController(config: VehicleConfig): VehicleControlle
 		step(deltaSeconds, input) {
 			const previousSpeed = state.speed;
 			const previousHeading = state.heading;
+			const airborne = state.verticalOffset > 0 || state.verticalVelocity > 0;
 			state.impactIntensity = Math.max(
 				0,
 				state.impactIntensity - IMPACT_INTENSITY_DECAY * deltaSeconds,
 			);
-			if (state.verticalOffset > 0 || state.verticalVelocity > 0) {
+			if (airborne) {
 				state.verticalVelocity -= IMPACT_GRAVITY * deltaSeconds;
 				state.verticalOffset += state.verticalVelocity * deltaSeconds;
 				if (state.verticalOffset <= 0) {
@@ -377,10 +393,12 @@ export function createVehicleController(config: VehicleConfig): VehicleControlle
 					state.verticalVelocity = rebound > IMPACT_GROUND_STOP_SPEED ? rebound : 0;
 				}
 			}
+			stepVehicleCrashState(state, deltaSeconds, airborne);
+			const controlInput = airborne ? AIRBORNE_INPUT : input;
 			const surface = config.terrain?.surfaceAt(state.x, state.z) ?? 'road';
 			const handling = SURFACE_HANDLING[surface];
-			state.speed = updateLongitudinalSpeed(state.speed, deltaSeconds, input, handling);
-			updateSteering(state, deltaSeconds, input, handling);
+			state.speed = updateLongitudinalSpeed(state.speed, deltaSeconds, controlInput, handling);
+			updateSteering(state, deltaSeconds, controlInput, handling);
 			const grassDensity = Math.max(
 				0,
 				Math.min(1, config.terrain?.grassDensityAt?.(state.x, state.z) ?? 0),
@@ -397,13 +415,17 @@ export function createVehicleController(config: VehicleConfig): VehicleControlle
 			const rightX = Math.cos(state.heading);
 			const rightZ = -Math.sin(state.heading);
 			const launchSlip =
-				input.accelerate && !input.brake && previousSpeed >= 0 && state.speed < LAUNCH_SLIP_SPEED
+				controlInput.accelerate &&
+				!controlInput.brake &&
+				previousSpeed >= 0 &&
+				state.speed < LAUNCH_SLIP_SPEED
 					? 1 - state.speed / LAUNCH_SLIP_SPEED
 					: 0;
 			const lateralVelocity = velocityX * rightX + velocityZ * rightZ;
 			const poweredRearGrip = ROAD_GRIP * (1 - launchSlip * 0.45);
-			const hardBraking = input.brake && !input.accelerate && previousSpeed > HARD_BRAKING_SPEED;
-			const grip = input.handbrake
+			const hardBraking =
+				controlInput.brake && !controlInput.accelerate && previousSpeed > HARD_BRAKING_SPEED;
+			const grip = controlInput.handbrake
 				? HANDBRAKE_REAR_GRIP
 				: hardBraking
 					? BRAKING_REAR_GRIP
@@ -411,7 +433,9 @@ export function createVehicleController(config: VehicleConfig): VehicleControlle
 			const retainedLateralVelocity = lateralVelocity * Math.max(0, 1 - grip * deltaSeconds);
 			velocityX = forwardX * state.speed + rightX * retainedLateralVelocity;
 			velocityZ = forwardZ * state.speed + rightZ * retainedLateralVelocity;
-			const impactDamping = Math.exp(-IMPACT_VELOCITY_DAMPING * deltaSeconds);
+			const impactDamping = Math.exp(
+				-(airborne ? IMPACT_AIR_VELOCITY_DAMPING : IMPACT_VELOCITY_DAMPING) * deltaSeconds,
+			);
 			impactVelocityX *= impactDamping;
 			impactVelocityZ *= impactDamping;
 			state.slipAngle = Math.atan2(retainedLateralVelocity, Math.max(Math.abs(state.speed), 0.01));
@@ -427,6 +451,7 @@ export function createVehicleController(config: VehicleConfig): VehicleControlle
 
 			if (
 				config.collision &&
+				!airborne &&
 				collidesAlongPath(
 					config.collision,
 					state.x,
@@ -449,7 +474,7 @@ export function createVehicleController(config: VehicleConfig): VehicleControlle
 			updatePhysicsFeedback(
 				state,
 				deltaSeconds,
-				input,
+				controlInput,
 				previousSpeed,
 				previousHeading,
 				launchSlip,
@@ -494,6 +519,13 @@ export function createVehicleController(config: VehicleConfig): VehicleControlle
 				Math.min(MAX_IMPACT_VERTICAL_SPEED, impact.verticalVelocity),
 			);
 			state.impactIntensity = Math.max(0, Math.min(1, Math.max(state.impactIntensity, impact.intensity)));
+			applyVehicleCrashImpulse(state, {
+				heading: state.heading,
+				velocityX: impact.velocityX,
+				velocityZ: impact.velocityZ,
+				intensity: impact.intensity,
+				verticalVelocity: state.verticalVelocity,
+			});
 			state.damage = Math.min(
 				1,
 				state.damage + Math.max(0, Math.min(1, impact.damage ?? impact.intensity * 0.4)),

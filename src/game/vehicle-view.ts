@@ -2,6 +2,7 @@ import * as THREE from 'three';
 
 import type { PorscheVisualModel, PorscheWheelVisual } from './porsche-model';
 import { DEFAULT_PORSCHE_COLOR, type PorscheColor } from './porsche-colors';
+import { hasVehicleCrashMotion } from './vehicle-crash';
 import type { VehicleState } from './vehicle';
 
 interface WheelAxle {
@@ -413,6 +414,21 @@ export function addVehicleView(
 			Math.max(0, finiteOr(state.verticalOffset, 0)),
 			visualResponse,
 		);
+		car.motion.rotation.x = THREE.MathUtils.lerp(
+			finiteOr(car.motion.rotation.x, 0),
+			finiteOr(state.crashPitch, 0),
+			visualResponse,
+		);
+		car.motion.rotation.y = THREE.MathUtils.lerp(
+			finiteOr(car.motion.rotation.y, 0),
+			finiteOr(state.crashYaw, 0),
+			visualResponse,
+		);
+		car.motion.rotation.z = THREE.MathUtils.lerp(
+			finiteOr(car.motion.rotation.z, 0),
+			finiteOr(state.crashRoll, 0),
+			visualResponse,
+		);
 		car.chassis.rotation.x = THREE.MathUtils.lerp(
 			finiteOr(car.chassis.rotation.x, 0),
 			-longitudinalLoad * 0.075 - impactIntensity * 0.045 - damage * 0.02,
@@ -449,7 +465,12 @@ export function addVehicleView(
 		const rearWheelSpeed = state.speed + state.rearSlip * 8 * Math.sign(state.speed || 1);
 		for (const wheel of car.rearAxle.wheels) wheel.rotation.x -= rearWheelSpeed * delta * 0.75;
 		const effectsActive = tireEffects.update(delta, state);
-		return effectsActive || state.verticalOffset > 0 || state.impactIntensity > 0;
+		return (
+			effectsActive ||
+			state.verticalOffset > 0 ||
+			state.impactIntensity > 0 ||
+			hasVehicleCrashMotion(state)
+		);
 		},
 		setColor(color) {
 			selectedColor = color;

@@ -47,6 +47,11 @@ describe('vehicle controller', () => {
 		expect(vehicle.state.verticalOffset).toBeGreaterThan(0);
 		expect(vehicle.state.impactIntensity).toBeGreaterThan(0);
 		expect(vehicle.state.damage).toBeGreaterThan(0);
+		expect(Math.abs(vehicle.state.crashPitchVelocity)).toBeGreaterThan(0);
+
+		vehicle.step(0.1, { accelerate: false, brake: false, left: false, right: false });
+
+		expect(Math.abs(vehicle.state.crashPitch)).toBeGreaterThan(0);
 
 		for (let frame = 0; frame < 120; frame += 1) {
 			vehicle.step(0.05, { accelerate: false, brake: false, left: false, right: false });

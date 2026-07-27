@@ -5,6 +5,12 @@ import {
 	type VehicleImpactChange,
 	type VehicleImpactEffect,
 } from './vehicle-impact';
+import {
+	applyVehicleCrashImpulse,
+	createVehicleCrashState,
+	stepVehicleCrashState,
+	type VehicleCrashState,
+} from './vehicle-crash';
 import type { RoadLayout } from './world';
 
 export const DEFAULT_TRAFFIC_VEHICLE_COUNT = 10;
@@ -14,7 +20,7 @@ const TRAFFIC_RANDOM_SEED_SALT = 0x3c6ef372;
 export const TRAFFIC_VEHICLE_KINDS = ['compact', 'bike', 'van', 'suv', 'truck'] as const;
 export type TrafficVehicleKind = (typeof TRAFFIC_VEHICLE_KINDS)[number];
 
-export interface TrafficVehicleState {
+export interface TrafficVehicleState extends VehicleCrashState {
 	id: number;
 	kind: TrafficVehicleKind;
 	x: number;
@@ -109,6 +115,10 @@ const TRAFFIC_AVOIDANCE_RESPONSE = 5;
 const TRAFFIC_AIRBORNE_CLOSING_SPEED = 5;
 const TRAFFIC_AIRBORNE_LAUNCH_FACTOR = 0.22;
 const PLAYER_AIRBORNE_LAUNCH_FACTOR = 0.14;
+const TRAFFIC_AIR_IMPACT_DAMPING = 0.28;
+const TRAFFIC_AIR_ROUTE_RETURN_STIFFNESS = 0.08;
+const TRAFFIC_CONTACT_SOLVER_PASSES = 3;
+const MINIMUM_IMPACT_CLOSING_SPEED = 0.25;
 
 interface TrafficPhysicsSpec {
 	acceleration: number;
@@ -347,6 +357,7 @@ export function createTrafficSimulation(options: TrafficSimulationOptions): Traf
 				damage: 0,
 				avoidanceBrake: 0,
 				avoidanceOffset: 0,
+				...createVehicleCrashState(),
 			},
 			tileX: candidate.tileX,
 			tileZ: candidate.tileZ,
@@ -451,6 +462,16 @@ export function createTrafficSimulation(options: TrafficSimulationOptions): Traf
 		return clamp(impulse * TRAFFIC_DAMAGE_PER_IMPULSE, 0, 1);
 	}
 
+	function applyTrafficSeparation(
+		vehicle: SimulatedVehicle,
+		impact: Pick<VehicleImpactChange, 'correctionX' | 'correctionZ'>,
+	): void {
+		vehicle.impactOffsetX += impact.correctionX;
+		vehicle.impactOffsetZ += impact.correctionZ;
+		vehicle.state.x = wrapCoordinate(vehicle.routeX + vehicle.impactOffsetX, layout.worldSpan);
+		vehicle.state.z = wrapCoordinate(vehicle.routeZ + vehicle.impactOffsetZ, layout.worldSpan);
+	}
+
 	function applyTrafficImpact(
 		vehicle: SimulatedVehicle,
 		impact: VehicleImpactChange,
@@ -458,8 +479,7 @@ export function createTrafficSimulation(options: TrafficSimulationOptions): Traf
 		intensity: number,
 		damage: number,
 	): void {
-		vehicle.impactOffsetX += impact.correctionX;
-		vehicle.impactOffsetZ += impact.correctionZ;
+		applyTrafficSeparation(vehicle, impact);
 		const forwardX = Math.sin(vehicle.state.heading);
 		const forwardZ = Math.cos(vehicle.state.heading);
 		const longitudinalImpact = impact.velocityX * forwardX + impact.velocityZ * forwardZ;
@@ -492,23 +512,41 @@ export function createTrafficSimulation(options: TrafficSimulationOptions): Traf
 			airborneVelocity(closingSpeed, TRAFFIC_AIRBORNE_LAUNCH_FACTOR),
 		);
 		vehicle.state.impactIntensity = Math.max(vehicle.state.impactIntensity, intensity);
+		applyVehicleCrashImpulse(vehicle.state, {
+			heading: vehicle.state.heading,
+			velocityX: impact.velocityX,
+			velocityZ: impact.velocityZ,
+			intensity,
+			verticalVelocity: vehicle.state.verticalVelocity,
+		});
 		vehicle.state.damage = Math.min(1, vehicle.state.damage + damage);
 		vehicle.recoverySeconds = Math.max(vehicle.recoverySeconds, 0.12 + intensity * 0.3);
 		vehicle.collisionCooldown = TRAFFIC_COLLISION_COOLDOWN;
 	}
 
 	function resolveTrafficImpacts(): void {
-		for (let firstIndex = 0; firstIndex < simulated.length; firstIndex += 1) {
-			const first = simulated[firstIndex];
-			if (first.collisionCooldown > 0) continue;
-			for (let secondIndex = firstIndex + 1; secondIndex < simulated.length; secondIndex += 1) {
-				const second = simulated[secondIndex];
-				if (second.collisionCooldown > 0) continue;
-				const collision = resolveVehicleImpact(bodyFor(first), bodyFor(second), layout.worldSpan);
-				if (!collision) continue;
-				const damage = damageFromImpulse(collision.impulse);
-				applyTrafficImpact(first, collision.first, collision.closingSpeed, collision.intensity, damage);
-				applyTrafficImpact(second, collision.second, collision.closingSpeed, collision.intensity, damage);
+		for (let pass = 0; pass < TRAFFIC_CONTACT_SOLVER_PASSES; pass += 1) {
+			for (let firstIndex = 0; firstIndex < simulated.length; firstIndex += 1) {
+				const first = simulated[firstIndex];
+				for (let secondIndex = firstIndex + 1; secondIndex < simulated.length; secondIndex += 1) {
+					const second = simulated[secondIndex];
+					const collision = resolveVehicleImpact(bodyFor(first), bodyFor(second), layout.worldSpan);
+					if (!collision) continue;
+					const hasNewImpact =
+						pass === 0 &&
+						first.collisionCooldown <= 0 &&
+						second.collisionCooldown <= 0 &&
+						collision.closingSpeed >= MINIMUM_IMPACT_CLOSING_SPEED;
+
+					if (hasNewImpact) {
+						const damage = damageFromImpulse(collision.impulse);
+						applyTrafficImpact(first, collision.first, collision.closingSpeed, collision.intensity, damage);
+						applyTrafficImpact(second, collision.second, collision.closingSpeed, collision.intensity, damage);
+					} else {
+						applyTrafficSeparation(first, collision.first);
+						applyTrafficSeparation(second, collision.second);
+					}
+				}
 			}
 		}
 	}
@@ -532,6 +570,8 @@ export function createTrafficSimulation(options: TrafficSimulationOptions): Traf
 				const previousZ = vehicle.state.z;
 				const previousSpeed = vehicle.state.speed;
 				const previousHeading = vehicle.state.heading;
+				const airborne =
+					vehicle.state.verticalOffset > 0 || vehicle.state.verticalVelocity > 0;
 				const avoidance = avoidanceFor(vehicle, obstacles);
 				vehicle.avoidanceTargetOffset = avoidance.offset;
 				const avoidanceResponse = 1 - Math.exp(-TRAFFIC_AVOIDANCE_RESPONSE * delta);
@@ -545,7 +585,7 @@ export function createTrafficSimulation(options: TrafficSimulationOptions): Traf
 					0,
 					vehicle.state.impactIntensity - TRAFFIC_IMPACT_INTENSITY_DECAY * delta,
 				);
-				if (vehicle.state.verticalOffset > 0 || vehicle.state.verticalVelocity > 0) {
+				if (airborne) {
 					vehicle.state.verticalVelocity -= TRAFFIC_IMPACT_GRAVITY * delta;
 					vehicle.state.verticalOffset += vehicle.state.verticalVelocity * delta;
 					if (vehicle.state.verticalOffset <= 0) {
@@ -554,7 +594,8 @@ export function createTrafficSimulation(options: TrafficSimulationOptions): Traf
 						vehicle.state.verticalVelocity = rebound > TRAFFIC_GROUND_STOP_SPEED ? rebound : 0;
 					}
 				}
-				const targetSpeed = vehicle.recoverySeconds > 0 ? 0 : avoidance.targetSpeed;
+				stepVehicleCrashState(vehicle.state, delta, airborne);
+				const targetSpeed = airborne || vehicle.recoverySeconds > 0 ? 0 : avoidance.targetSpeed;
 				const speedRate =
 					targetSpeed >= vehicle.state.speed ? vehicle.acceleration : vehicle.braking;
 				vehicle.state.speed = moveToward(
@@ -572,11 +613,14 @@ export function createTrafficSimulation(options: TrafficSimulationOptions): Traf
 								),
 							)
 						: 0;
-				vehicle.impactVelocityX -=
-					vehicle.impactOffsetX * TRAFFIC_ROUTE_RETURN_STIFFNESS * delta;
-				vehicle.impactVelocityZ -=
-					vehicle.impactOffsetZ * TRAFFIC_ROUTE_RETURN_STIFFNESS * delta;
-				const impactDamping = Math.exp(-TRAFFIC_IMPACT_DAMPING * delta);
+				const routeReturnStiffness = airborne
+					? TRAFFIC_AIR_ROUTE_RETURN_STIFFNESS
+					: TRAFFIC_ROUTE_RETURN_STIFFNESS;
+				vehicle.impactVelocityX -= vehicle.impactOffsetX * routeReturnStiffness * delta;
+				vehicle.impactVelocityZ -= vehicle.impactOffsetZ * routeReturnStiffness * delta;
+				const impactDamping = Math.exp(
+					-(airborne ? TRAFFIC_AIR_IMPACT_DAMPING : TRAFFIC_IMPACT_DAMPING) * delta,
+				);
 				vehicle.impactVelocityX *= impactDamping;
 				vehicle.impactVelocityZ *= impactDamping;
 				vehicle.impactOffsetX += vehicle.impactVelocityX * delta;
@@ -616,57 +660,65 @@ export function createTrafficSimulation(options: TrafficSimulationOptions): Traf
 			resolveTrafficImpacts();
 		},
 		resolvePlayerImpacts(player) {
-			const impacts: TrafficPlayerImpact[] = [];
 			const playerBody = { ...player };
-			for (const vehicle of simulated) {
-				if (vehicle.collisionCooldown > 0) continue;
-				const collision = resolveVehicleImpact(
-					playerBody,
-					{
-						x: vehicle.state.x,
-						z: vehicle.state.z,
-						velocityX: vehicle.state.velocityX,
-						velocityZ: vehicle.state.velocityZ,
-						radius: vehicle.radius,
-						mass: vehicle.mass,
-					},
-					layout.worldSpan,
-				);
-				if (!collision) continue;
+			const playerImpact: TrafficPlayerImpact = {
+				velocityX: 0,
+				velocityZ: 0,
+				correctionX: 0,
+				correctionZ: 0,
+				verticalVelocity: 0,
+				intensity: 0,
+				damage: 0,
+			};
+			let contacted = false;
 
-				const damage = damageFromImpulse(collision.impulse);
-				applyTrafficImpact(
-					vehicle,
-					collision.second,
-					collision.closingSpeed,
-					collision.intensity,
-					damage,
-				);
+			for (let pass = 0; pass < TRAFFIC_CONTACT_SOLVER_PASSES; pass += 1) {
+				for (const vehicle of simulated) {
+					const collision = resolveVehicleImpact(playerBody, bodyFor(vehicle), layout.worldSpan);
+					if (!collision) continue;
+					contacted = true;
+					const hasNewImpact =
+						pass === 0 &&
+						vehicle.collisionCooldown <= 0 &&
+						collision.closingSpeed >= MINIMUM_IMPACT_CLOSING_SPEED;
 
-				playerBody.x = wrapCoordinate(
-					playerBody.x + collision.first.correctionX,
-					layout.worldSpan,
-				);
-				playerBody.z = wrapCoordinate(
-					playerBody.z + collision.first.correctionZ,
-					layout.worldSpan,
-				);
-				playerBody.velocityX += collision.first.velocityX;
-				playerBody.velocityZ += collision.first.velocityZ;
-				impacts.push({
-					velocityX: collision.first.velocityX,
-					velocityZ: collision.first.velocityZ,
-					correctionX: collision.first.correctionX,
-					correctionZ: collision.first.correctionZ,
-					verticalVelocity: airborneVelocity(
-						collision.closingSpeed,
-						PLAYER_AIRBORNE_LAUNCH_FACTOR,
-					),
-					intensity: collision.intensity,
-					damage,
-				});
+					if (hasNewImpact) {
+						const damage = damageFromImpulse(collision.impulse);
+						applyTrafficImpact(
+							vehicle,
+							collision.second,
+							collision.closingSpeed,
+							collision.intensity,
+							damage,
+						);
+						playerBody.velocityX += collision.first.velocityX;
+						playerBody.velocityZ += collision.first.velocityZ;
+						playerImpact.velocityX += collision.first.velocityX;
+						playerImpact.velocityZ += collision.first.velocityZ;
+						playerImpact.verticalVelocity = Math.max(
+							playerImpact.verticalVelocity,
+							airborneVelocity(collision.closingSpeed, PLAYER_AIRBORNE_LAUNCH_FACTOR),
+						);
+						playerImpact.intensity = Math.max(playerImpact.intensity, collision.intensity);
+						playerImpact.damage = Math.min(1, playerImpact.damage + damage);
+					} else {
+						applyTrafficSeparation(vehicle, collision.second);
+					}
+
+					playerBody.x = wrapCoordinate(
+						playerBody.x + collision.first.correctionX,
+						layout.worldSpan,
+					);
+					playerBody.z = wrapCoordinate(
+						playerBody.z + collision.first.correctionZ,
+						layout.worldSpan,
+					);
+					playerImpact.correctionX += collision.first.correctionX;
+					playerImpact.correctionZ += collision.first.correctionZ;
+				}
 			}
-			return impacts;
+
+			return contacted ? [playerImpact] : [];
 		},
 	};
 }

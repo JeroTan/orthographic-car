@@ -7,6 +7,7 @@ import {
 	type TrafficPlayerImpact,
 	type TrafficVehicleState,
 } from './traffic';
+import { hasVehicleCrashMotion } from './vehicle-crash';
 import type { VehicleImpactBody } from './vehicle-impact';
 import type { RoadLayout } from './world';
 
@@ -330,12 +331,17 @@ export function addTrafficView(
 				visual.body.position.y = state.verticalOffset;
 				visual.body.rotation.x = THREE.MathUtils.lerp(
 					visual.body.rotation.x,
-					-state.longitudinalLoad * 0.055 - damage * 0.018,
+					state.crashPitch - state.longitudinalLoad * 0.055 - damage * 0.018,
+					response,
+				);
+				visual.body.rotation.y = THREE.MathUtils.lerp(
+					visual.body.rotation.y,
+					state.crashYaw,
 					response,
 				);
 				visual.body.rotation.z = THREE.MathUtils.lerp(
 					visual.body.rotation.z,
-					state.lateralLoad * 0.065 + damage * 0.025,
+					state.crashRoll + state.lateralLoad * 0.065 + damage * 0.025,
 					response,
 				);
 				visual.body.scale.y = THREE.MathUtils.lerp(
@@ -358,7 +364,10 @@ export function addTrafficView(
 				for (const wheel of visual.wheels) {
 					wheel.rotation.x -= wheelSpeed * TRAFFIC_WHEEL_SPIN_FACTOR * renderDeltaSeconds;
 				}
-				effectsActive ||= state.verticalOffset > 0 || state.impactIntensity > 0;
+				effectsActive ||=
+					state.verticalOffset > 0 ||
+					state.impactIntensity > 0 ||
+					hasVehicleCrashMotion(state);
 			}
 			return effectsActive;
 		},

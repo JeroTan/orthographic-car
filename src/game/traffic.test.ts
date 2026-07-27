@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { createTerrainIndex, generateWorld } from './world';
+import { createTerrainIndex, generateWorld, type RoadLayout } from './world';
 import {
 	createTrafficSimulation,
 	DEFAULT_TRAFFIC_VEHICLE_COUNT,
@@ -13,7 +13,47 @@ function wrappedDelta(value: number, span: number): number {
 	return ((((value + halfSpan) % span) + span) % span) - halfSpan;
 }
 
+function closestTrafficDistance(
+	vehicles: readonly { x: number; z: number }[],
+	worldSpan: number,
+): number {
+	let closest = Number.POSITIVE_INFINITY;
+	for (let first = 0; first < vehicles.length; first += 1) {
+		for (let second = first + 1; second < vehicles.length; second += 1) {
+			closest = Math.min(
+				closest,
+				Math.hypot(
+					wrappedDelta(vehicles[second].x - vehicles[first].x, worldSpan),
+					wrappedDelta(vehicles[second].z - vehicles[first].z, worldSpan),
+				),
+			);
+		}
+	}
+	return closest;
+}
+
 describe('ambient traffic simulation', () => {
+	it('does not leave a dense collision chain merged after contact resolution', () => {
+		const denseLayout: RoadLayout = {
+			gridSize: 16,
+			tileSize: 0.5,
+			worldSpan: 8,
+			roads: Array.from({ length: 256 }, (_, id) => ({ x: id % 16, z: Math.floor(id / 16) })),
+		};
+		const traffic = createTrafficSimulation({ layout: denseLayout, seed: 66767, maxVehicles: 3 });
+		let closest = Number.POSITIVE_INFINITY;
+
+		for (let frame = 0; frame < 1; frame += 1) {
+			traffic.step(0.05);
+			closest = Math.min(
+				closest,
+				closestTrafficDistance(traffic.vehicles, denseLayout.worldSpan),
+			);
+		}
+
+		expect(closest).toBeGreaterThan(1.2);
+	});
+
 	it('accelerates traffic from spawn speed toward its cruise speed', () => {
 		const traffic = createTrafficSimulation({ layout: generateWorld(6767), seed: 6767, maxVehicles: 1 });
 		const initialSpeed = traffic.vehicles[0].speed;
@@ -135,10 +175,12 @@ describe('ambient traffic simulation', () => {
 		expect(vehicle.verticalVelocity).toBeGreaterThan(7);
 		expect(vehicle.damage).toBeGreaterThan(0.25);
 		expect(vehicle.damage).toBeCloseTo(impacts[0].damage, 8);
+		expect(Math.abs(vehicle.crashPitchVelocity)).toBeGreaterThan(0);
 
 		traffic.step(0.1);
 
 		expect(vehicle.verticalOffset).toBeGreaterThan(0.5);
+		expect(Math.abs(vehicle.crashPitch)).toBeGreaterThan(0);
 	});
 
 	it('keeps each traffic vehicle facing its direction of travel', () => {
