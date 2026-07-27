@@ -6,6 +6,7 @@ import {
 	DEFAULT_TRAFFIC_VEHICLE_COUNT,
 	MAX_TRAFFIC_VEHICLES,
 	TRAFFIC_VEHICLE_KINDS,
+	type TrafficSimulationOptions,
 } from './traffic';
 
 function wrappedDelta(value: number, span: number): number {
@@ -83,6 +84,42 @@ describe('ambient traffic simulation', () => {
 		expect(vehicle.speed).toBeLessThan(initialSpeed);
 		expect(vehicle.longitudinalLoad).toBeLessThan(0);
 		expect(Math.abs(vehicle.avoidanceOffset)).toBeGreaterThan(0);
+	});
+
+	it('keeps traffic out of solid map scenery', () => {
+		const obstacle = { x: 0, z: 0, radius: 1 };
+		const collision = {
+			intersectsCircle(x: number, z: number, radius: number) {
+				return Math.hypot(x - obstacle.x, z - obstacle.z) < radius + obstacle.radius;
+			},
+			normalAt(x: number, z: number) {
+				const distance = Math.hypot(x - obstacle.x, z - obstacle.z);
+				return distance > 0
+					? { x: (x - obstacle.x) / distance, z: (z - obstacle.z) / distance }
+					: { x: 0, z: -1 };
+			},
+		};
+		const options: TrafficSimulationOptions = {
+			layout: generateWorld(6767),
+			seed: 6767,
+			maxVehicles: 1,
+			collision,
+		};
+		const traffic = createTrafficSimulation(options);
+		const vehicle = traffic.vehicles[0];
+		obstacle.x = vehicle.x + Math.sin(vehicle.heading) * 3;
+		obstacle.z = vehicle.z + Math.cos(vehicle.heading) * 3;
+		let closestDistance = Number.POSITIVE_INFINITY;
+
+		for (let frame = 0; frame < 30; frame += 1) {
+			traffic.step(0.05);
+			closestDistance = Math.min(
+				closestDistance,
+				Math.hypot(vehicle.x - obstacle.x, vehicle.z - obstacle.z),
+			);
+		}
+
+		expect(closestDistance).toBeGreaterThan(1.3);
 	});
 
 	it('escapes a persistent blocker instead of freezing in its lane', () => {

@@ -11,6 +11,7 @@ import {
 	stepVehicleCrashState,
 	type VehicleCrashState,
 } from './vehicle-crash';
+import type { CollisionQuery } from './vehicle';
 import type { RoadLayout } from './world';
 
 export const DEFAULT_TRAFFIC_VEHICLE_COUNT = 10;
@@ -47,6 +48,7 @@ export interface TrafficSimulationOptions {
 	layout: RoadLayout;
 	seed: number;
 	maxVehicles?: number;
+	collision?: CollisionQuery;
 }
 
 export interface TrafficSimulation {
@@ -90,6 +92,19 @@ interface SimulatedVehicle {
 	collisionCooldown: number;
 }
 
+interface TrafficRouteSnapshot {
+	tileX: number;
+	tileZ: number;
+	direction: Direction;
+	progress: number;
+	offsetFromX: number;
+	offsetFromZ: number;
+	offsetToX: number;
+	offsetToZ: number;
+	impactOffsetX: number;
+	impactOffsetZ: number;
+}
+
 const DIRECTIONS: readonly Direction[] = [
 	{ dx: 1, dz: 0 },
 	{ dx: -1, dz: 0 },
@@ -124,6 +139,10 @@ const TRAFFIC_AIR_IMPACT_DAMPING = 0.28;
 const TRAFFIC_AIR_ROUTE_RETURN_STIFFNESS = 0.08;
 const TRAFFIC_CONTACT_SOLVER_PASSES = 3;
 const MINIMUM_IMPACT_CLOSING_SPEED = 0.25;
+const TRAFFIC_STATIC_RESTITUTION = 0.28;
+const TRAFFIC_STATIC_ESCAPE_STEP = 0.5;
+const TRAFFIC_STATIC_ESCAPE_MAX_DISTANCE = 12;
+const TRAFFIC_STATIC_ESCAPE_DIRECTIONS = 12;
 
 interface TrafficPhysicsSpec {
 	acceleration: number;
@@ -292,6 +311,7 @@ function sameDirection(first: Direction, second: Direction): boolean {
 
 export function createTrafficSimulation(options: TrafficSimulationOptions): TrafficSimulation {
 	const { layout } = options;
+	const collision = options.collision;
 	const random = createRandom(options.seed ^ TRAFFIC_RANDOM_SEED_SALT);
 	const requestedCount = options.maxVehicles ?? DEFAULT_TRAFFIC_VEHICLE_COUNT;
 	const vehicleCount = Math.min(
@@ -487,6 +507,133 @@ export function createTrafficSimulation(options: TrafficSimulationOptions): Traf
 		return true;
 	}
 
+	function snapshotRoute(vehicle: SimulatedVehicle): TrafficRouteSnapshot {
+		return {
+			tileX: vehicle.tileX,
+			tileZ: vehicle.tileZ,
+			direction: { ...vehicle.direction },
+			progress: vehicle.progress,
+			offsetFromX: vehicle.offsetFromX,
+			offsetFromZ: vehicle.offsetFromZ,
+			offsetToX: vehicle.offsetToX,
+			offsetToZ: vehicle.offsetToZ,
+			impactOffsetX: vehicle.impactOffsetX,
+			impactOffsetZ: vehicle.impactOffsetZ,
+		};
+	}
+
+	function restoreRoute(vehicle: SimulatedVehicle, snapshot: TrafficRouteSnapshot): void {
+		vehicle.tileX = snapshot.tileX;
+		vehicle.tileZ = snapshot.tileZ;
+		vehicle.direction = snapshot.direction;
+		vehicle.progress = snapshot.progress;
+		vehicle.offsetFromX = snapshot.offsetFromX;
+		vehicle.offsetFromZ = snapshot.offsetFromZ;
+		vehicle.offsetToX = snapshot.offsetToX;
+		vehicle.offsetToZ = snapshot.offsetToZ;
+		vehicle.impactOffsetX = snapshot.impactOffsetX;
+		vehicle.impactOffsetZ = snapshot.impactOffsetZ;
+		updatePosition(layout, vehicle);
+	}
+
+	function staticCollisionNormal(
+		vehicle: SimulatedVehicle,
+		velocityX: number,
+		velocityZ: number,
+	): { x: number; z: number } {
+		const candidate = collision?.normalAt?.(vehicle.state.x, vehicle.state.z, vehicle.radius);
+		const candidateLength = candidate ? Math.hypot(candidate.x, candidate.z) : 0;
+		if (candidate && Number.isFinite(candidateLength) && candidateLength > 0.0001) {
+			return { x: candidate.x / candidateLength, z: candidate.z / candidateLength };
+		}
+
+		const velocityLength = Math.hypot(velocityX, velocityZ);
+		if (velocityLength > 0.0001) {
+			return { x: -velocityX / velocityLength, z: -velocityZ / velocityLength };
+		}
+		return { x: -Math.sin(vehicle.state.heading), z: -Math.cos(vehicle.state.heading) };
+	}
+
+	function findStaticEscape(vehicle: SimulatedVehicle): { x: number; z: number } | undefined {
+		if (!collision || !collision.intersectsCircle(vehicle.state.x, vehicle.state.z, vehicle.radius)) {
+			return undefined;
+		}
+		const normal = staticCollisionNormal(vehicle, 0, 0);
+		const normalAngle = Math.atan2(normal.x, normal.z);
+
+		for (
+			let distance = TRAFFIC_STATIC_ESCAPE_STEP;
+			distance <= TRAFFIC_STATIC_ESCAPE_MAX_DISTANCE;
+			distance += TRAFFIC_STATIC_ESCAPE_STEP
+		) {
+			for (let direction = 0; direction < TRAFFIC_STATIC_ESCAPE_DIRECTIONS; direction += 1) {
+				const angle = normalAngle + (direction * Math.PI * 2) / TRAFFIC_STATIC_ESCAPE_DIRECTIONS;
+				const candidate = {
+					x: wrapCoordinate(vehicle.state.x + Math.sin(angle) * distance, layout.worldSpan),
+					z: wrapCoordinate(vehicle.state.z + Math.cos(angle) * distance, layout.worldSpan),
+				};
+				if (!collision.intersectsCircle(candidate.x, candidate.z, vehicle.radius)) return candidate;
+			}
+		}
+
+		return undefined;
+	}
+
+	function resolveStaticCollision(
+		vehicle: SimulatedVehicle,
+		snapshot: TrafficRouteSnapshot,
+		velocityX: number,
+		velocityZ: number,
+	): void {
+		if (!collision) return;
+		const normal = staticCollisionNormal(vehicle, velocityX, velocityZ);
+		const inwardSpeed = Math.max(0, -(velocityX * normal.x + velocityZ * normal.z));
+		restoreRoute(vehicle, snapshot);
+
+		const escape = findStaticEscape(vehicle);
+		if (escape) {
+			vehicle.impactOffsetX = wrappedDelta(escape.x - vehicle.routeX, layout.worldSpan);
+			vehicle.impactOffsetZ = wrappedDelta(escape.z - vehicle.routeZ, layout.worldSpan);
+			vehicle.state.x = escape.x;
+			vehicle.state.z = escape.z;
+		}
+
+		const reflectedVelocityX = velocityX + normal.x * inwardSpeed * (1 + TRAFFIC_STATIC_RESTITUTION);
+		const reflectedVelocityZ = velocityZ + normal.z * inwardSpeed * (1 + TRAFFIC_STATIC_RESTITUTION);
+		const recoil = clampVelocityMagnitude(
+			vehicle.impactVelocityX + reflectedVelocityX,
+			vehicle.impactVelocityZ + reflectedVelocityZ,
+			MAX_TRAFFIC_IMPACT_SPEED,
+		);
+		const intensity = clamp(inwardSpeed / 18, 0, 1);
+		const impulse = inwardSpeed * vehicle.mass * (1 + TRAFFIC_STATIC_RESTITUTION);
+
+		vehicle.state.speed = 0;
+		vehicle.impactVelocityX = recoil.x;
+		vehicle.impactVelocityZ = recoil.z;
+		vehicle.state.velocityX = recoil.x;
+		vehicle.state.velocityZ = recoil.z;
+		if (recoil.x !== 0 || recoil.z !== 0) {
+			vehicle.state.heading = Math.atan2(recoil.x, recoil.z);
+		}
+		vehicle.state.verticalVelocity = Math.max(
+			vehicle.state.verticalVelocity,
+			airborneVelocity(inwardSpeed, TRAFFIC_AIRBORNE_LAUNCH_FACTOR),
+		);
+		vehicle.state.impactIntensity = Math.max(vehicle.state.impactIntensity, intensity);
+		vehicle.state.damage = Math.min(1, vehicle.state.damage + damageFromImpulse(impulse));
+		applyVehicleCrashImpulse(vehicle.state, {
+			heading: vehicle.state.heading,
+			velocityX: reflectedVelocityX - velocityX,
+			velocityZ: reflectedVelocityZ - velocityZ,
+			intensity,
+			verticalVelocity: vehicle.state.verticalVelocity,
+		});
+		vehicle.recoverySeconds = Math.max(vehicle.recoverySeconds, 0.16 + intensity * 0.4);
+		rerouteBlockedVehicle(vehicle);
+		updatePosition(layout, vehicle);
+	}
+
 	function airborneVelocity(closingSpeed: number, factor: number): number {
 		return Math.min(
 			MAX_TRAFFIC_VERTICAL_SPEED,
@@ -606,6 +753,7 @@ export function createTrafficSimulation(options: TrafficSimulationOptions): Traf
 				const previousZ = vehicle.state.z;
 				const previousSpeed = vehicle.state.speed;
 				const previousHeading = vehicle.state.heading;
+				const routeSnapshot = snapshotRoute(vehicle);
 				const airborne =
 					vehicle.state.verticalOffset > 0 || vehicle.state.verticalVelocity > 0;
 				let avoidance = avoidanceFor(vehicle, obstacles);
@@ -695,6 +843,14 @@ export function createTrafficSimulation(options: TrafficSimulationOptions): Traf
 				}
 				vehicle.state.velocityX = delta > 0 ? movementX / delta : vehicle.state.velocityX;
 				vehicle.state.velocityZ = delta > 0 ? movementZ / delta : vehicle.state.velocityZ;
+				if (collision && collision.intersectsCircle(vehicle.state.x, vehicle.state.z, vehicle.radius)) {
+					resolveStaticCollision(
+						vehicle,
+						routeSnapshot,
+						delta > 0 ? movementX / delta : vehicle.state.velocityX,
+						delta > 0 ? movementZ / delta : vehicle.state.velocityZ,
+					);
+				}
 				vehicle.state.lateralLoad =
 					delta > 0
 						? Math.max(

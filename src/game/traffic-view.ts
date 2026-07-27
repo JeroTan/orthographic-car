@@ -8,6 +8,7 @@ import {
 	type TrafficVehicleState,
 } from './traffic';
 import { hasVehicleCrashMotion } from './vehicle-crash';
+import type { CollisionQuery } from './vehicle';
 import type { VehicleImpactBody } from './vehicle-impact';
 import type { RoadLayout } from './world';
 
@@ -284,8 +285,9 @@ export function addTrafficView(
 	layout: RoadLayout,
 	seed: number,
 	maxVehicles: number = DEFAULT_TRAFFIC_VEHICLE_COUNT,
+	collision?: CollisionQuery,
 ): TrafficView {
-	const simulation = createTrafficSimulation({ layout, seed, maxVehicles });
+	const simulation = createTrafficSimulation({ layout, seed, maxVehicles, collision });
 	if (simulation.vehicles.length === 0) {
 		return {
 			step: () => undefined,

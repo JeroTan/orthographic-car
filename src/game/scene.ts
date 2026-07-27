@@ -319,9 +319,10 @@ function disposeScene(scene: THREE.Scene): void {
 export function createGameScene(container: HTMLElement, options: GameSceneOptions): GameScene {
 	const layout = generateWorld(options.seed);
 	const terrainIndex = createTerrainIndex(layout);
+	const collisionIndex = createCollisionIndex(layout);
 	const controller = createVehicleController({
 		worldSpan: layout.worldSpan,
-		collision: createCollisionIndex(layout),
+		collision: collisionIndex,
 		terrain: terrainIndex,
 	});
 	const scene = new THREE.Scene();
@@ -359,6 +360,7 @@ export function createGameScene(container: HTMLElement, options: GameSceneOption
 		layout,
 		options.seed,
 		options.maxTrafficVehicles ?? DEFAULT_TRAFFIC_VEHICLE_COUNT,
+		collisionIndex,
 	);
 	let destroyed = false;
 	let lastTime = performance.now();
