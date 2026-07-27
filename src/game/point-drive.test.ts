@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { pointDriveInput } from './point-drive';
+import { createVehicleController } from './vehicle';
 
 describe('point drive input', () => {
 	it('accelerates and steers toward a side target in front of the reverse cone', () => {
@@ -33,5 +34,19 @@ describe('point drive input', () => {
 		);
 
 		expect([forward.left, forward.right]).toEqual([reverse.right, reverse.left]);
+	});
+
+	it('drives east from a north-facing start and reverses for a southern target', () => {
+		const vehicle = createVehicleController({ worldSpan: 144 });
+		for (let frame = 0; frame < 30; frame += 1) {
+			vehicle.step(0.05, pointDriveInput(vehicle.state, { x: 60, z: 0 }));
+		}
+		expect(vehicle.state.x).toBeGreaterThan(4);
+
+		const beforeReverseZ = vehicle.state.z;
+		for (let frame = 0; frame < 60; frame += 1) {
+			vehicle.step(0.05, pointDriveInput(vehicle.state, { x: vehicle.state.x, z: -60 }));
+		}
+		expect(vehicle.state.z).toBeLessThan(beforeReverseZ);
 	});
 });
