@@ -8,7 +8,51 @@ import {
 	TRAFFIC_VEHICLE_KINDS,
 } from './traffic';
 
+function wrappedDelta(value: number, span: number): number {
+	const halfSpan = span / 2;
+	return ((((value + halfSpan) % span) + span) % span) - halfSpan;
+}
+
 describe('ambient traffic simulation', () => {
+	it('keeps each traffic vehicle facing its direction of travel', () => {
+		const world = generateWorld(6767);
+		const traffic = createTrafficSimulation({ layout: world, seed: 6767, maxVehicles: 1 });
+
+		for (let step = 0; step < 9; step += 1) {
+			const previous = { ...traffic.vehicles[0] };
+			traffic.step(0.05);
+			const vehicle = traffic.vehicles[0];
+			const deltaX = wrappedDelta(vehicle.x - previous.x, world.worldSpan);
+			const deltaZ = wrappedDelta(vehicle.z - previous.z, world.worldSpan);
+			const distance = Math.hypot(deltaX, deltaZ);
+			const forwardDot =
+				(Math.sin(vehicle.heading) * deltaX + Math.cos(vehicle.heading) * deltaZ) / distance;
+
+			expect(forwardDot).toBeGreaterThan(0);
+		}
+	});
+
+	it('keeps traffic facing its curved road path', () => {
+		const world = generateWorld(6767);
+		const traffic = createTrafficSimulation({ layout: world, seed: 6767, maxVehicles: 2 });
+
+		for (let step = 0; step < 240; step += 1) {
+			const previous = traffic.vehicles.map(({ x, z }) => ({ x, z }));
+			traffic.step(0.05);
+
+			for (let index = 0; index < traffic.vehicles.length; index += 1) {
+				const vehicle = traffic.vehicles[index];
+				const deltaX = wrappedDelta(vehicle.x - previous[index].x, world.worldSpan);
+				const deltaZ = wrappedDelta(vehicle.z - previous[index].z, world.worldSpan);
+				const distance = Math.hypot(deltaX, deltaZ);
+				const forwardDot =
+					(Math.sin(vehicle.heading) * deltaX + Math.cos(vehicle.heading) * deltaZ) / distance;
+
+				expect(forwardDot).toBeGreaterThan(0);
+			}
+		}
+	});
+
 	it('spawns capped varied vehicles on road surface', () => {
 		const world = generateWorld(6767);
 		const terrain = createTerrainIndex(world);

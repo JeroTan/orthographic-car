@@ -43,8 +43,6 @@ interface SimulatedVehicle {
 	offsetFromZ: number;
 	offsetToX: number;
 	offsetToZ: number;
-	headingFrom: number;
-	headingTo: number;
 }
 
 const DIRECTIONS: readonly Direction[] = [
@@ -150,13 +148,8 @@ function smoothBlend(value: number): number {
 	return clamped * clamped * (3 - 2 * clamped);
 }
 
-function shortestAngleDelta(from: number, to: number): number {
-	return ((((to - from + Math.PI) % (Math.PI * 2)) + Math.PI) % (Math.PI * 2)) - Math.PI;
-}
-
 function updatePosition(layout: RoadLayout, vehicle: SimulatedVehicle): void {
 	const blend = smoothBlend(vehicle.progress);
-	const headingDelta = shortestAngleDelta(vehicle.headingFrom, vehicle.headingTo);
 	const centerX = tileCenter(layout, vehicle.tileX);
 	const centerZ = tileCenter(layout, vehicle.tileZ);
 	vehicle.state.x = wrapCoordinate(
@@ -167,9 +160,8 @@ function updatePosition(layout: RoadLayout, vehicle: SimulatedVehicle): void {
 	vehicle.state.z = wrapCoordinate(
 		centerZ + vehicle.direction.dz * layout.tileSize * vehicle.progress +
 			vehicle.offsetFromZ + (vehicle.offsetToZ - vehicle.offsetFromZ) * blend,
-			layout.worldSpan,
+		layout.worldSpan,
 	);
-	vehicle.state.heading = vehicle.headingFrom + headingDelta * blend;
 }
 
 function aimVehicle(vehicle: SimulatedVehicle, direction: Direction): void {
@@ -179,8 +171,6 @@ function aimVehicle(vehicle: SimulatedVehicle, direction: Direction): void {
 	vehicle.offsetFromZ = currentOffset.z;
 	vehicle.offsetToX = nextOffset.x;
 	vehicle.offsetToZ = nextOffset.z;
-	vehicle.headingFrom = vehicle.state.heading;
-	vehicle.headingTo = directionHeading(direction);
 	vehicle.direction = direction;
 }
 
@@ -258,8 +248,6 @@ export function createTrafficSimulation(options: TrafficSimulationOptions): Traf
 			offsetFromZ: offset.z,
 			offsetToX: offset.x,
 			offsetToZ: offset.z,
-			headingFrom: heading,
-			headingTo: heading,
 		};
 		updatePosition(layout, vehicle);
 		simulated.push(vehicle);
@@ -272,6 +260,8 @@ export function createTrafficSimulation(options: TrafficSimulationOptions): Traf
 		step(deltaSeconds) {
 			const delta = Number.isFinite(deltaSeconds) ? Math.max(0, Math.min(deltaSeconds, 0.25)) : 0;
 			for (const vehicle of simulated) {
+				const previousX = vehicle.state.x;
+				const previousZ = vehicle.state.z;
 				vehicle.progress += (vehicle.state.speed * delta) / layout.tileSize;
 				while (vehicle.progress >= 1) {
 					vehicle.progress -= 1;
@@ -285,6 +275,11 @@ export function createTrafficSimulation(options: TrafficSimulationOptions): Traf
 					if (direction) aimVehicle(vehicle, direction);
 				}
 				updatePosition(layout, vehicle);
+				const movementX = wrapCoordinate(vehicle.state.x - previousX, layout.worldSpan);
+				const movementZ = wrapCoordinate(vehicle.state.z - previousZ, layout.worldSpan);
+				if (movementX !== 0 || movementZ !== 0) {
+					vehicle.state.heading = Math.atan2(movementX, movementZ);
+				}
 			}
 		},
 	};
