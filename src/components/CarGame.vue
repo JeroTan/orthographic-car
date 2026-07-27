@@ -83,6 +83,7 @@ const controlButtons: ReadonlyArray<{
 
 let game: GameScene | undefined;
 let startToken = 0;
+let mapPointerId: number | undefined;
 
 const displaySpeed = computed(() => toSpeedometerKmh(speed.value));
 const surfaceLabel = computed(() =>
@@ -112,6 +113,8 @@ function handleKeyUp(event: KeyboardEvent): void {
 function releaseControls(): void {
   for (const control of Object.keys(controls) as Control[])
     controls[control] = false;
+  mapPointerId = undefined;
+  game?.clearPointDrive();
 }
 
 async function startGame(): Promise<void> {
@@ -165,6 +168,28 @@ function handlePointerStart(event: PointerEvent, control: Control): void {
   setControl(control, true);
 }
 
+function handleMapPointerDown(event: PointerEvent): void {
+  if (mapPointerId !== undefined) return;
+  const host = event.currentTarget as HTMLElement;
+  mapPointerId = event.pointerId;
+  host.setPointerCapture(event.pointerId);
+  game?.setPointDrive(event.clientX, event.clientY);
+  event.preventDefault();
+}
+
+function handleMapPointerMove(event: PointerEvent): void {
+  if (event.pointerId !== mapPointerId) return;
+  game?.setPointDrive(event.clientX, event.clientY);
+}
+
+function handleMapPointerEnd(event: PointerEvent): void {
+  if (event.pointerId !== mapPointerId) return;
+  const host = event.currentTarget as HTMLElement;
+  if (host.hasPointerCapture(event.pointerId)) host.releasePointerCapture(event.pointerId);
+  mapPointerId = undefined;
+  game?.clearPointDrive();
+}
+
 onMounted(() => {
   window.addEventListener("keydown", handleKeyDown, { passive: false });
   window.addEventListener("keyup", handleKeyUp, { passive: false });
@@ -183,7 +208,15 @@ onUnmounted(() => {
 
 <template>
   <main class="game-shell">
-    <div ref="gameHost" class="game-canvas" />
+    <div
+      ref="gameHost"
+      class="game-canvas"
+      @pointerdown="handleMapPointerDown"
+      @pointermove="handleMapPointerMove"
+      @pointerup="handleMapPointerEnd"
+      @pointercancel="handleMapPointerEnd"
+      @lostpointercapture="handleMapPointerEnd"
+    />
 
     <header class="topbar">
       <div class="brand-panel">
@@ -211,6 +244,8 @@ onUnmounted(() => {
     </header>
 
     <div class="status-cluster">
+      <p class="touch-drive-tip">Hold map: steer and drive. Point behind to reverse.</p>
+
       <section class="color-panel" aria-label="Porsche color">
         <span>Car color</span>
         <div class="color-options">
@@ -251,6 +286,7 @@ onUnmounted(() => {
       <div class="controls-copy">
         <span>How to drive</span>
         <strong>WASD <em>or</em> arrows</strong>
+        <small>Hold map: point ahead to drive. Behind brakes / reverses.</small>
       </div>
       <div class="control-grid">
         <button
@@ -437,6 +473,20 @@ h1 {
   gap: 0.45rem;
 }
 
+.touch-drive-tip {
+  display: none;
+  margin: 0;
+  padding: 0.46rem 0.65rem;
+  border: 1px solid rgb(255 255 255 / 55%);
+  border-radius: 0.75rem 0.75rem 0.75rem 0.2rem;
+  background: rgb(250 247 233 / 94%);
+  box-shadow: 0 10px 24px rgb(55 71 58 / 12%);
+  font-size: 0.6rem;
+  font-weight: 800;
+  line-height: 1.25;
+  color: #55694f;
+}
+
 .color-panel {
   display: flex;
   align-items: center;
@@ -565,6 +615,13 @@ h1 {
   font-size: 0.78rem;
 }
 
+.controls-copy small {
+  max-width: 10.5rem;
+  font-size: 0.58rem;
+  line-height: 1.25;
+  color: #6d7568;
+}
+
 .controls-copy em {
   font-family: Georgia, "Times New Roman", serif;
   font-weight: 400;
@@ -680,6 +737,9 @@ h1 {
   .eco-chip,
   .world-note {
     display: none;
+  }
+  .touch-drive-tip {
+    display: block;
   }
   .brand-panel {
     padding: 0.8rem 0.9rem;

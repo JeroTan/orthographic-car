@@ -2,6 +2,7 @@ import * as THREE from 'three';
 
 import { addBuildingView } from './building-view';
 import { addGrassView } from './grass-view';
+import { pointDriveInput } from './point-drive';
 import { buildRoadDecorations, buildRoadSurface, type RoadDecorationRect } from './road-surface';
 import { createVehicleController, type VehicleInput } from './vehicle';
 import { addVehicleView } from './vehicle-view';
@@ -34,6 +35,8 @@ export interface GameSceneOptions {
 
 export interface GameScene {
 	wake(): void;
+	setPointDrive(clientX: number, clientY: number): void;
+	clearPointDrive(): void;
 	unstick(): boolean;
 	setCarColor(color: PorscheColor): void;
 	destroy(): void;
@@ -367,6 +370,11 @@ export function createGameScene(container: HTMLElement, options: GameSceneOption
 	let telemetryElapsed = 0;
 	let idleElapsed = 0;
 	let running = false;
+	let pointDrivePosition: { clientX: number; clientY: number } | undefined;
+	const pointDriveNdc = new THREE.Vector2();
+	const pointDriveRaycaster = new THREE.Raycaster();
+	const pointDriveGround = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+	const pointDriveTarget = new THREE.Vector3();
 
 	function resize(): void {
 		const width = Math.max(container.clientWidth, 1);
@@ -383,11 +391,37 @@ export function createGameScene(container: HTMLElement, options: GameSceneOption
 
 	const resizeObserver = new ResizeObserver(resize);
 	resizeObserver.observe(container);
+
+	function positionCamera(): void {
+		const { state } = controller;
+		camera.position.set(state.x + CAMERA_OFFSET, CAMERA_HEIGHT, state.z - CAMERA_OFFSET);
+		camera.lookAt(state.x, 0, state.z);
+		camera.updateMatrixWorld();
+	}
+
+	function readPointDriveInput(): VehicleInput | undefined {
+		if (!pointDrivePosition) return undefined;
+		const bounds = renderer.domElement.getBoundingClientRect();
+		if (bounds.width <= 0 || bounds.height <= 0) return undefined;
+
+		positionCamera();
+		pointDriveNdc.set(
+			((pointDrivePosition.clientX - bounds.left) / bounds.width) * 2 - 1,
+			-((pointDrivePosition.clientY - bounds.top) / bounds.height) * 2 + 1,
+		);
+		pointDriveRaycaster.setFromCamera(pointDriveNdc, camera);
+		if (!pointDriveRaycaster.ray.intersectPlane(pointDriveGround, pointDriveTarget)) return undefined;
+		return pointDriveInput(controller.state, pointDriveTarget);
+	}
 	resize();
 
 	function frame(now: number): void {
 		if (destroyed) return;
-		const input = options.readInput();
+		const keyboardInput = options.readInput();
+		const touchInput = readPointDriveInput();
+		const input = touchInput
+			? { ...touchInput, handbrake: keyboardInput.handbrake }
+			: keyboardInput;
 		const hasInput = input.accelerate || input.brake || input.left || input.right || input.handbrake;
 		if (idleElapsed >= 0.25 && !hasInput && now - lastTime < IDLE_FRAME_INTERVAL_MS) return;
 		const delta = Math.min((now - lastTime) / 1000, 0.05);
@@ -413,9 +447,7 @@ export function createGameScene(container: HTMLElement, options: GameSceneOption
 		const { state } = controller;
 		const effectsActive = vehicleView.update(delta, state);
 		const trafficEffectsActive = trafficView.render(state);
-		camera.position.set(state.x + CAMERA_OFFSET, CAMERA_HEIGHT, state.z - CAMERA_OFFSET);
-		camera.lookAt(state.x, 0, state.z);
-		camera.updateMatrixWorld();
+		positionCamera();
 		buildingView.update(state);
 		grassView.update(now / 1000, state);
 		renderer.render(scene, camera);
@@ -459,6 +491,14 @@ export function createGameScene(container: HTMLElement, options: GameSceneOption
 
 	return {
 		wake: startLoop,
+		setPointDrive(clientX, clientY) {
+			if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) return;
+			pointDrivePosition = { clientX, clientY };
+			startLoop();
+		},
+		clearPointDrive() {
+			pointDrivePosition = undefined;
+		},
 		unstick() {
 			const didUnstick = controller.unstick();
 			if (didUnstick) startLoop();
