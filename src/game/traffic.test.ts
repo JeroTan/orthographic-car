@@ -65,7 +65,7 @@ describe('ambient traffic simulation', () => {
 		expect(traffic.vehicles[0].longitudinalLoad).toBeGreaterThan(0);
 	});
 
-	it('brakes and eases aside before reaching a blocked lane', () => {
+	it('brakes and waits in its lane before reaching a blocked lane', () => {
 		const traffic = createTrafficSimulation({ layout: generateWorld(6767), seed: 6767, maxVehicles: 1 });
 		const vehicle = traffic.vehicles[0];
 		const forwardX = Math.sin(vehicle.heading);
@@ -83,7 +83,7 @@ describe('ambient traffic simulation', () => {
 
 		expect(vehicle.speed).toBeLessThan(initialSpeed);
 		expect(vehicle.longitudinalLoad).toBeLessThan(0);
-		expect(Math.abs(vehicle.avoidanceOffset)).toBeGreaterThan(0);
+		expect(Math.abs(vehicle.avoidanceOffset)).toBeLessThan(0.01);
 	});
 
 	it('keeps traffic out of solid map scenery', () => {
@@ -122,13 +122,13 @@ describe('ambient traffic simulation', () => {
 		expect(closestDistance).toBeGreaterThan(1.3);
 	});
 
-	it('escapes a persistent blocker instead of freezing in its lane', () => {
+	it('waits behind a persistent blocker without reversing its route', () => {
 		const world = generateWorld(6767);
 		const traffic = createTrafficSimulation({ layout: world, seed: 6767, maxVehicles: 1 });
 		const vehicle = traffic.vehicles[0];
 		const forwardX = Math.sin(vehicle.heading);
 		const forwardZ = Math.cos(vehicle.heading);
-		const start = { x: vehicle.x, z: vehicle.z };
+		const startingHeading = vehicle.heading;
 		const blocker = {
 			x: vehicle.x + forwardX * 3,
 			z: vehicle.z + forwardZ * 3,
@@ -140,13 +140,8 @@ describe('ambient traffic simulation', () => {
 
 		for (let frame = 0; frame < 120; frame += 1) traffic.step(0.05, blocker);
 
-		expect(vehicle.speed).toBeGreaterThan(1);
-		expect(
-			Math.hypot(
-				wrappedDelta(vehicle.x - start.x, world.worldSpan),
-				wrappedDelta(vehicle.z - start.z, world.worldSpan),
-			),
-		).toBeGreaterThan(3);
+		expect(vehicle.speed).toBeLessThan(0.35);
+		expect(Math.cos(vehicle.heading - startingHeading)).toBeGreaterThan(0.9);
 	});
 
 	it('returns player recoil and launches traffic after a collision', () => {
@@ -304,6 +299,34 @@ describe('ambient traffic simulation', () => {
 			createTrafficSimulation({ layout: world, seed: 6767, maxVehicles: MAX_TRAFFIC_VEHICLES + 10 })
 				.vehicles.length,
 		).toBe(MAX_TRAFFIC_VEHICLES);
+	});
+
+	it('uses model-sized collision capsules and slower meadow handling', () => {
+		const world = generateWorld(6767);
+		const roadTraffic = createTrafficSimulation({ layout: world, seed: 6767, maxVehicles: 1 });
+		const meadowTraffic = createTrafficSimulation({
+			layout: world,
+			seed: 6767,
+			maxVehicles: 1,
+			terrain: { surfaceAt: () => 'meadow' },
+		});
+		for (let step = 0; step < 30; step += 1) {
+			roadTraffic.step(0.1);
+			meadowTraffic.step(0.1);
+		}
+		expect(roadTraffic.vehicles[0].speed).toBeGreaterThan(meadowTraffic.vehicles[0].speed);
+		expect(meadowTraffic.vehicles[0].surface).toBe('meadow');
+
+		const traffic = createTrafficSimulation({
+			layout: world,
+			seed: 6767,
+			maxVehicles: DEFAULT_TRAFFIC_VEHICLE_COUNT,
+		});
+		const motorcycle = traffic.vehicles.find((vehicle) => vehicle.kind === 'motorcycle');
+		const bus = traffic.vehicles.find((vehicle) => vehicle.kind === 'bus');
+		if (!motorcycle || !bus) throw new Error('Expected vehicle classes missing.');
+		expect(bus.collisionHalfLength).toBeGreaterThan(motorcycle.collisionHalfLength * 3);
+		expect(bus.collisionRadius).toBeGreaterThan(motorcycle.collisionRadius);
 	});
 
 	it('moves deterministically while staying on connected road tiles', () => {

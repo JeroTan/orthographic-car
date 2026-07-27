@@ -364,6 +364,8 @@ export function createGameScene(container: HTMLElement, options: GameSceneOption
 		options.seed,
 		options.maxTrafficVehicles ?? DEFAULT_TRAFFIC_VEHICLE_COUNT,
 		collisionIndex,
+		terrainIndex,
+		() => startLoop(),
 	);
 	let destroyed = false;
 	let lastTime = performance.now();

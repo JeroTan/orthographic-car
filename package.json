@@ -8,6 +8,7 @@
   "scripts": {
     "dev": "astro dev",
     "asset:porsche": "node scripts/build-porsche-model.mjs",
+	"asset:traffic": "node scripts/build-traffic-textures.mjs && node scripts/build-traffic-models.mjs",
     "asset:buildings": "node scripts/build-residential-buildings.mjs",
     "build": "astro check && vitest run && astro build",
     "check": "astro check",
