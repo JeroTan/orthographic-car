@@ -4,8 +4,10 @@ import {
 	createTrafficSimulation,
 	DEFAULT_TRAFFIC_VEHICLE_COUNT,
 	type TrafficVehicleKind,
+	type TrafficPlayerImpact,
 	type TrafficVehicleState,
 } from './traffic';
+import type { VehicleImpactBody } from './vehicle-impact';
 import type { RoadLayout } from './world';
 
 const TRAFFIC_RENDER_DISTANCE = 125;
@@ -118,6 +120,7 @@ const TRAFFIC_SPECS: Readonly<Record<TrafficVehicleKind, TrafficSpec>> = {
 
 interface TrafficVisual {
 	group: THREE.Group;
+	body: THREE.Group;
 	wheels: THREE.Mesh[];
 }
 
@@ -202,15 +205,17 @@ function addTrafficVehicle(
 ): TrafficVisual {
 	const spec = TRAFFIC_SPECS[state.kind];
 	const group = new THREE.Group();
+	const vehicleBody = new THREE.Group();
+	group.add(vehicleBody);
 	const body = new THREE.Mesh(assets.bodyGeometry.get(state.kind), assets.bodyMaterials.get(state.kind));
 	body.position.y = spec.wheelRadius + spec.bodyHeight / 2;
-	group.add(body);
+	vehicleBody.add(body);
 
 	const cabinGeometry = assets.cabinGeometry.get(state.kind);
 	if (cabinGeometry) {
 		const cabin = new THREE.Mesh(cabinGeometry, state.kind === 'van' ? assets.trimMaterials.get(state.kind) : assets.glass);
 		cabin.position.set(0, spec.wheelRadius + spec.bodyHeight + spec.cabinHeight / 2, spec.cabinOffset);
-		group.add(cabin);
+		vehicleBody.add(cabin);
 	}
 
 	if (state.kind === 'truck') {
@@ -221,16 +226,16 @@ function addTrafficVehicle(
 			assets.trimMaterials.get(state.kind),
 		);
 		cargo.position.set(0, 1.48, -0.82);
-		group.add(cargo);
+		vehicleBody.add(cargo);
 	}
-	if (state.kind === 'bike') addBikeRider(group, assets);
+	if (state.kind === 'bike') addBikeRider(vehicleBody, assets);
 
 	const wheels: THREE.Mesh[] = [];
 	const wheelGeometry = assets.wheelGeometry.get(state.kind);
 	for (const [x, z] of spec.wheelPositions) {
 		const wheel = new THREE.Mesh(wheelGeometry, assets.tire);
 		wheel.position.set(x, spec.wheelRadius, z);
-		group.add(wheel);
+		vehicleBody.add(wheel);
 		wheels.push(wheel);
 	}
 
@@ -240,14 +245,14 @@ function addTrafficVehicle(
 		const frontLight = new THREE.Mesh(frontLightGeometry, assets.light);
 		for (const x of [-spec.bodyWidth * 0.3, spec.bodyWidth * 0.3]) {
 			frontLight.position.set(x, spec.wheelRadius + spec.bodyHeight * 0.6, spec.bodyLength / 2 + 0.03);
-			group.add(frontLight.clone());
+			vehicleBody.add(frontLight.clone());
 		}
 		const tailLightGeometry = new THREE.BoxGeometry(spec.bodyWidth * 0.14, 0.1, 0.06);
 		assets.extraGeometries.add(tailLightGeometry);
 		const tailLight = new THREE.Mesh(tailLightGeometry, assets.tail);
 		for (const x of [-spec.bodyWidth * 0.3, spec.bodyWidth * 0.3]) {
 			tailLight.position.set(x, spec.wheelRadius + spec.bodyHeight * 0.6, -spec.bodyLength / 2 - 0.03);
-			group.add(tailLight.clone());
+			vehicleBody.add(tailLight.clone());
 		}
 	}
 
@@ -258,7 +263,7 @@ function addTrafficVehicle(
 	group.add(shadow);
 	group.position.y = 0.04;
 	scene.add(group);
-	return { group, wheels };
+	return { group, body: vehicleBody, wheels };
 }
 
 function wrappedDelta(value: number, span: number): number {
@@ -267,7 +272,9 @@ function wrappedDelta(value: number, span: number): number {
 }
 
 export interface TrafficView {
-	update(deltaSeconds: number, player: Pick<TrafficVehicleState, 'x' | 'z'>): boolean;
+	step(deltaSeconds: number, player?: VehicleImpactBody): void;
+	resolvePlayerImpacts(player: VehicleImpactBody): readonly TrafficPlayerImpact[];
+	render(player: Pick<TrafficVehicleState, 'x' | 'z'>): boolean;
 	destroy(): void;
 }
 
@@ -280,18 +287,35 @@ export function addTrafficView(
 	const simulation = createTrafficSimulation({ layout, seed, maxVehicles });
 	if (simulation.vehicles.length === 0) {
 		return {
-			update: () => false,
+			step: () => undefined,
+			resolvePlayerImpacts: () => [],
+			render: () => false,
 			destroy: () => undefined,
 		};
 	}
 	const assets = createSharedAssets();
 	const visuals = simulation.vehicles.map((state) => addTrafficVehicle(scene, assets, state));
 	let destroyed = false;
+	let visualDeltaSeconds = 0;
 
 	return {
-		update(deltaSeconds, player) {
+		step(deltaSeconds, player) {
+			if (destroyed || visuals.length === 0) return;
+			visualDeltaSeconds = Math.min(
+				0.25,
+				visualDeltaSeconds + Math.max(0, Math.min(deltaSeconds, 0.25)),
+			);
+			simulation.step(deltaSeconds, player);
+		},
+		resolvePlayerImpacts(player) {
+			if (destroyed || visuals.length === 0) return [];
+			return simulation.resolvePlayerImpacts(player);
+		},
+		render(player) {
 			if (destroyed || visuals.length === 0) return false;
-			simulation.step(deltaSeconds);
+			const renderDeltaSeconds = visualDeltaSeconds;
+			visualDeltaSeconds = 0;
+			let effectsActive = false;
 			for (let index = 0; index < simulation.vehicles.length; index += 1) {
 				const state = simulation.vehicles[index];
 				const visual = visuals[index];
@@ -299,13 +323,44 @@ export function addTrafficView(
 				const relativeZ = wrappedDelta(state.z - player.z, layout.worldSpan);
 				visual.group.position.set(player.x + relativeX, 0.04, player.z + relativeZ);
 				visual.group.rotation.y = state.heading;
+				const response = 1 - Math.exp(-8 * renderDeltaSeconds);
+				const accelerationStretch = Math.max(0, state.longitudinalLoad);
+				const brakingSquash = Math.max(0, -state.longitudinalLoad);
+				const damage = THREE.MathUtils.clamp(state.damage, 0, 1);
+				visual.body.position.y = state.verticalOffset;
+				visual.body.rotation.x = THREE.MathUtils.lerp(
+					visual.body.rotation.x,
+					-state.longitudinalLoad * 0.055 - damage * 0.018,
+					response,
+				);
+				visual.body.rotation.z = THREE.MathUtils.lerp(
+					visual.body.rotation.z,
+					state.lateralLoad * 0.065 + damage * 0.025,
+					response,
+				);
+				visual.body.scale.y = THREE.MathUtils.lerp(
+					visual.body.scale.y,
+					1 -
+						accelerationStretch * 0.025 -
+						brakingSquash * 0.075 -
+						state.impactIntensity * 0.06 -
+						damage * 0.06,
+					response,
+				);
+				visual.body.scale.z = THREE.MathUtils.lerp(
+					visual.body.scale.z,
+					1 + accelerationStretch * 0.045 + state.impactIntensity * 0.08 + damage * 0.035,
+					response,
+				);
 				visual.group.visible =
 					relativeX * relativeX + relativeZ * relativeZ < TRAFFIC_RENDER_DISTANCE ** 2;
+				const wheelSpeed = Math.hypot(state.velocityX, state.velocityZ);
 				for (const wheel of visual.wheels) {
-					wheel.rotation.x -= state.speed * deltaSeconds * TRAFFIC_WHEEL_SPIN_FACTOR;
+					wheel.rotation.x -= wheelSpeed * TRAFFIC_WHEEL_SPIN_FACTOR * renderDeltaSeconds;
 				}
+				effectsActive ||= state.verticalOffset > 0 || state.impactIntensity > 0;
 			}
-			return true;
+			return effectsActive;
 		},
 		destroy() {
 			if (destroyed) return;

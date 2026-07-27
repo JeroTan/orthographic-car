@@ -1,3 +1,11 @@
+import {
+	clampVelocityMagnitude,
+	type VehicleImpactBody,
+	type VehicleImpactEffect,
+} from './vehicle-impact';
+
+export type { VehicleImpactEffect } from './vehicle-impact';
+
 export interface VehicleInput {
 	accelerate: boolean;
 	brake: boolean;
@@ -17,11 +25,17 @@ export interface VehicleState {
 	lateralLoad: number;
 	rearSlip: number;
 	skidIntensity: number;
+	verticalOffset: number;
+	verticalVelocity: number;
+	impactIntensity: number;
+	damage: number;
 }
 
 export interface VehicleController {
 	readonly state: VehicleState;
 	step(deltaSeconds: number, input: VehicleInput): void;
+	getCollisionBody(): VehicleImpactBody;
+	applyImpact(impact: VehicleImpactEffect): void;
 }
 
 export interface CollisionQuery {
@@ -72,6 +86,7 @@ const MEADOW_OVERSPEED_DRAG_MPS2 = 28.13;
 const GRASS_ROLLING_DRAG_MPS2 = 3.86;
 const TURNING_DRAG_MPS2 = 14.06;
 const HANDBRAKE_DRAG_MPS2 = 21.08;
+const IMPACT_GRAVITY_MPS2 = 22;
 
 function worldSpeedFromKmh(speedKmh: number): number {
 	return speedKmh / WORLD_SPEED_TO_KMH;
@@ -99,6 +114,7 @@ const MAX_STEERING_ANGLE = 0.5;
 const STEERING_RESPONSE = 4.5;
 const TURNING_DRAG = worldAccelerationFromMps2(TURNING_DRAG_MPS2);
 const HANDBRAKE_DRAG = worldAccelerationFromMps2(HANDBRAKE_DRAG_MPS2);
+const IMPACT_GRAVITY = worldAccelerationFromMps2(IMPACT_GRAVITY_MPS2);
 const HANDBRAKE_YAW_BOOST = 1.65;
 const ROAD_GRIP = 10;
 const BRAKING_REAR_GRIP = 4.5;
@@ -117,6 +133,14 @@ const SPEED_ACCELERATION_CURVE = 1.6;
 const LAUNCH_SLIP_SPEED = worldSpeedFromKmh(75.9);
 const HARD_BRAKING_SPEED = worldSpeedFromKmh(101.2);
 const LATERAL_LOAD_SPEED = worldSpeedFromKmh(404.8);
+const PLAYER_COLLISION_RADIUS = CAR_COLLISION_RADIUS;
+const PLAYER_COLLISION_MASS = 1.55;
+const IMPACT_VELOCITY_DAMPING = 4.6;
+const IMPACT_INTENSITY_DECAY = 1.7;
+const IMPACT_GROUND_RESTITUTION = 0.28;
+const IMPACT_GROUND_STOP_SPEED = worldAccelerationFromMps2(0.8);
+const MAX_IMPACT_VERTICAL_SPEED = worldAccelerationFromMps2(9.5);
+const MAX_IMPACT_KNOCKBACK_SPEED = worldSpeedFromKmh(145);
 
 export function toSpeedometerKmh(longitudinalSpeed: number): number {
 	return Math.round(Math.abs(longitudinalSpeed) * WORLD_SPEED_TO_KMH);
@@ -325,15 +349,34 @@ export function createVehicleController(config: VehicleConfig): VehicleControlle
 		lateralLoad: 0,
 		rearSlip: 0,
 		skidIntensity: 0,
+		verticalOffset: 0,
+		verticalVelocity: 0,
+		impactIntensity: 0,
+		damage: 0,
 	};
 	let velocityX = 0;
 	let velocityZ = 0;
+	let impactVelocityX = 0;
+	let impactVelocityZ = 0;
 
 	return {
 		state,
 		step(deltaSeconds, input) {
 			const previousSpeed = state.speed;
 			const previousHeading = state.heading;
+			state.impactIntensity = Math.max(
+				0,
+				state.impactIntensity - IMPACT_INTENSITY_DECAY * deltaSeconds,
+			);
+			if (state.verticalOffset > 0 || state.verticalVelocity > 0) {
+				state.verticalVelocity -= IMPACT_GRAVITY * deltaSeconds;
+				state.verticalOffset += state.verticalVelocity * deltaSeconds;
+				if (state.verticalOffset <= 0) {
+					state.verticalOffset = 0;
+					const rebound = -state.verticalVelocity * IMPACT_GROUND_RESTITUTION;
+					state.verticalVelocity = rebound > IMPACT_GROUND_STOP_SPEED ? rebound : 0;
+				}
+			}
 			const surface = config.terrain?.surfaceAt(state.x, state.z) ?? 'road';
 			const handling = SURFACE_HANDLING[surface];
 			state.speed = updateLongitudinalSpeed(state.speed, deltaSeconds, input, handling);
@@ -368,14 +411,17 @@ export function createVehicleController(config: VehicleConfig): VehicleControlle
 			const retainedLateralVelocity = lateralVelocity * Math.max(0, 1 - grip * deltaSeconds);
 			velocityX = forwardX * state.speed + rightX * retainedLateralVelocity;
 			velocityZ = forwardZ * state.speed + rightZ * retainedLateralVelocity;
+			const impactDamping = Math.exp(-IMPACT_VELOCITY_DAMPING * deltaSeconds);
+			impactVelocityX *= impactDamping;
+			impactVelocityZ *= impactDamping;
 			state.slipAngle = Math.atan2(retainedLateralVelocity, Math.max(Math.abs(state.speed), 0.01));
 
 			const nextX = wrapCoordinate(
-				state.x + velocityX * deltaSeconds,
+				state.x + (velocityX + impactVelocityX) * deltaSeconds,
 				config.worldSpan,
 			);
 			const nextZ = wrapCoordinate(
-				state.z + velocityZ * deltaSeconds,
+				state.z + (velocityZ + impactVelocityZ) * deltaSeconds,
 				config.worldSpan,
 			);
 
@@ -407,6 +453,50 @@ export function createVehicleController(config: VehicleConfig): VehicleControlle
 				previousSpeed,
 				previousHeading,
 				launchSlip,
+			);
+		},
+		getCollisionBody() {
+			return {
+				x: state.x,
+				z: state.z,
+				velocityX: velocityX + impactVelocityX,
+				velocityZ: velocityZ + impactVelocityZ,
+				radius: PLAYER_COLLISION_RADIUS,
+				mass: PLAYER_COLLISION_MASS,
+			};
+		},
+		applyImpact(impact) {
+			state.x = wrapCoordinate(state.x + impact.correctionX, config.worldSpan);
+			state.z = wrapCoordinate(state.z + impact.correctionZ, config.worldSpan);
+			const forwardX = Math.sin(state.heading);
+			const forwardZ = Math.cos(state.heading);
+			const rightX = Math.cos(state.heading);
+			const rightZ = -Math.sin(state.heading);
+			const existingLateralVelocity = velocityX * rightX + velocityZ * rightZ;
+			const longitudinalImpact = impact.velocityX * forwardX + impact.velocityZ * forwardZ;
+			const lateralImpactX = impact.velocityX - forwardX * longitudinalImpact;
+			const lateralImpactZ = impact.velocityZ - forwardZ * longitudinalImpact;
+			state.speed = Math.max(
+				-MAX_REVERSE_SPEED,
+				Math.min(MAX_SPEED, state.speed + longitudinalImpact),
+			);
+			velocityX = forwardX * state.speed + rightX * existingLateralVelocity;
+			velocityZ = forwardZ * state.speed + rightZ * existingLateralVelocity;
+			const knockback = clampVelocityMagnitude(
+				impactVelocityX + lateralImpactX,
+				impactVelocityZ + lateralImpactZ,
+				MAX_IMPACT_KNOCKBACK_SPEED,
+			);
+			impactVelocityX = knockback.x;
+			impactVelocityZ = knockback.z;
+			state.verticalVelocity = Math.max(
+				state.verticalVelocity,
+				Math.min(MAX_IMPACT_VERTICAL_SPEED, impact.verticalVelocity),
+			);
+			state.impactIntensity = Math.max(0, Math.min(1, Math.max(state.impactIntensity, impact.intensity)));
+			state.damage = Math.min(
+				1,
+				state.damage + Math.max(0, Math.min(1, impact.damage ?? impact.intensity * 0.4)),
 			);
 		},
 	};

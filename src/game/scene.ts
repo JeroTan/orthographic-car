@@ -44,6 +44,8 @@ const CAMERA_OFFSET = 28;
 const VIEW_HEIGHT = 46;
 const IDLE_FRAME_INTERVAL_MS = 66;
 const ROAD_TEXTURE_URL = new URL('../assets/roads/RoadTexture2.jpg', import.meta.url).href;
+const MAX_PHYSICS_SUBSTEPS = 4;
+const MAX_COLLISION_TRAVEL_PER_STEP = 1.1;
 
 function makeNoiseTexture(
 	base: readonly [number, number, number],
@@ -411,10 +413,26 @@ export function createGameScene(container: HTMLElement, options: GameSceneOption
 		const delta = Math.min((now - lastTime) / 1000, 0.05);
 		lastTime = now;
 
-		controller.step(delta, input);
+		const currentBody = controller.getCollisionBody();
+		const simulationSpeed = Math.max(
+			Math.abs(controller.state.speed),
+			Math.hypot(currentBody.velocityX, currentBody.velocityZ),
+		);
+		const physicsSteps = Math.min(
+			MAX_PHYSICS_SUBSTEPS,
+			Math.max(1, Math.ceil((simulationSpeed * delta) / MAX_COLLISION_TRAVEL_PER_STEP)),
+		);
+		const physicsDelta = delta / physicsSteps;
+		for (let step = 0; step < physicsSteps; step += 1) {
+			controller.step(physicsDelta, input);
+			trafficView.step(physicsDelta, controller.getCollisionBody());
+			for (const impact of trafficView.resolvePlayerImpacts(controller.getCollisionBody())) {
+				controller.applyImpact(impact);
+			}
+		}
 		const { state } = controller;
 		const effectsActive = vehicleView.update(delta, state);
-		trafficView.update(delta, state);
+		const trafficEffectsActive = trafficView.render(state);
 		camera.position.set(state.x + CAMERA_OFFSET, CAMERA_HEIGHT, state.z - CAMERA_OFFSET);
 		camera.lookAt(state.x, 0, state.z);
 		camera.updateMatrixWorld();
@@ -432,7 +450,10 @@ export function createGameScene(container: HTMLElement, options: GameSceneOption
 			});
 		}
 
-		idleElapsed = state.speed === 0 && !hasInput && !effectsActive ? idleElapsed + delta : 0;
+		idleElapsed =
+			state.speed === 0 && !hasInput && !effectsActive && !trafficEffectsActive
+				? idleElapsed + delta
+				: 0;
 	}
 
 	function startLoop(): void {

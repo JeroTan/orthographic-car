@@ -28,6 +28,34 @@ describe('vehicle controller', () => {
 		expect(vehicle.state.speed).toBeLessThan(1);
 	});
 
+	it('reacts to an impact with knockback and a gravity-driven bounce', () => {
+		const vehicle = createVehicleController({ worldSpan: 144 });
+		vehicle.applyImpact({
+			velocityX: 0,
+			velocityZ: -8,
+			correctionX: 0,
+			correctionZ: -0.4,
+			verticalVelocity: 5,
+			intensity: 0.8,
+			damage: 0.5,
+		});
+
+		vehicle.step(0.05, { accelerate: false, brake: false, left: false, right: false });
+
+		expect(vehicle.getCollisionBody().velocityZ).toBeLessThan(0);
+		expect(vehicle.state.z).toBeLessThan(-0.4);
+		expect(vehicle.state.verticalOffset).toBeGreaterThan(0);
+		expect(vehicle.state.impactIntensity).toBeGreaterThan(0);
+		expect(vehicle.state.damage).toBeGreaterThan(0);
+
+		for (let frame = 0; frame < 120; frame += 1) {
+			vehicle.step(0.05, { accelerate: false, brake: false, left: false, right: false });
+		}
+
+		expect(vehicle.state.verticalOffset).toBe(0);
+		expect(vehicle.state.verticalVelocity).toBe(0);
+	});
+
 	it('shows reverse motion as positive speedometer speed', () => {
 		const reverseWorldSpeed = toWorldSpeed(120);
 		expect([toSpeedometerKmh(reverseWorldSpeed), toSpeedometerKmh(-reverseWorldSpeed)]).toEqual([

@@ -11,6 +11,7 @@ interface WheelAxle {
 
 interface CarVisual {
 	group: THREE.Group;
+	motion: THREE.Group;
 	chassis: THREE.Group;
 	fallbackBody: THREE.Group;
 	fallbackWheels: THREE.Mesh[];
@@ -20,9 +21,11 @@ interface CarVisual {
 
 function addCar(scene: THREE.Scene): CarVisual {
 	const group = new THREE.Group();
+	const motion = new THREE.Group();
 	const chassis = new THREE.Group();
 	const fallbackBody = new THREE.Group();
-	group.add(chassis);
+	group.add(motion);
+	motion.add(chassis);
 	chassis.add(fallbackBody);
 	const red = new THREE.MeshLambertMaterial({ color: 0xd9523f });
 	const cream = new THREE.MeshLambertMaterial({ color: 0xf5d99d });
@@ -57,7 +60,7 @@ function addCar(scene: THREE.Scene): CarVisual {
 			pivot.position.set(x, 0.56, z);
 			const wheel = new THREE.Mesh(wheelGeometry, dark);
 			pivot.add(wheel);
-			group.add(pivot);
+			motion.add(pivot);
 			fallbackWheels.push(wheel);
 			if (z > 0) {
 				frontAxle.pivots.push(pivot);
@@ -88,6 +91,7 @@ function addCar(scene: THREE.Scene): CarVisual {
 	scene.add(group);
 	return {
 		group,
+		motion,
 		chassis,
 		fallbackBody,
 		fallbackWheels,
@@ -400,31 +404,38 @@ export function addVehicleView(
 		const visualResponse = 1 - Math.exp(-Math.max(0, finiteOr(delta, 0)) * 11);
 		const longitudinalLoad = THREE.MathUtils.clamp(finiteOr(state.longitudinalLoad, 0), -1, 1);
 		const lateralLoad = THREE.MathUtils.clamp(finiteOr(state.lateralLoad, 0), -1, 1);
+		const impactIntensity = THREE.MathUtils.clamp(finiteOr(state.impactIntensity, 0), 0, 1);
+		const damage = THREE.MathUtils.clamp(finiteOr(state.damage, 0), 0, 1);
 		const accelerationStretch = Math.max(0, longitudinalLoad);
 		const brakingSquash = Math.max(0, -longitudinalLoad);
+		car.motion.position.y = THREE.MathUtils.lerp(
+			finiteOr(car.motion.position.y, 0),
+			Math.max(0, finiteOr(state.verticalOffset, 0)),
+			visualResponse,
+		);
 		car.chassis.rotation.x = THREE.MathUtils.lerp(
 			finiteOr(car.chassis.rotation.x, 0),
-			-longitudinalLoad * 0.075,
+			-longitudinalLoad * 0.075 - impactIntensity * 0.045 - damage * 0.02,
 			visualResponse,
 		);
 		car.chassis.rotation.z = THREE.MathUtils.lerp(
 			finiteOr(car.chassis.rotation.z, 0),
-			lateralLoad * 0.09,
+			lateralLoad * 0.09 + damage * 0.025,
 			visualResponse,
 		);
 		car.chassis.scale.x = THREE.MathUtils.lerp(
 			finiteOr(car.chassis.scale.x, 1),
-			1 + brakingSquash * 0.045,
+			1 + brakingSquash * 0.045 + damage * 0.025,
 			visualResponse,
 		);
 		car.chassis.scale.y = THREE.MathUtils.lerp(
 			finiteOr(car.chassis.scale.y, 1),
-			1 - accelerationStretch * 0.025 - brakingSquash * 0.09,
+			1 - accelerationStretch * 0.025 - brakingSquash * 0.09 - impactIntensity * 0.045 - damage * 0.06,
 			visualResponse,
 		);
 		car.chassis.scale.z = THREE.MathUtils.lerp(
 			finiteOr(car.chassis.scale.z, 1),
-			1 + accelerationStretch * 0.055,
+			1 + accelerationStretch * 0.055 + impactIntensity * 0.06 + damage * 0.035,
 			visualResponse,
 		);
 		for (const pivot of car.frontAxle.pivots) {
@@ -438,7 +449,7 @@ export function addVehicleView(
 		const rearWheelSpeed = state.speed + state.rearSlip * 8 * Math.sign(state.speed || 1);
 		for (const wheel of car.rearAxle.wheels) wheel.rotation.x -= rearWheelSpeed * delta * 0.75;
 		const effectsActive = tireEffects.update(delta, state);
-		return effectsActive;
+		return effectsActive || state.verticalOffset > 0 || state.impactIntensity > 0;
 		},
 		setColor(color) {
 			selectedColor = color;

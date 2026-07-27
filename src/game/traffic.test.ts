@@ -14,6 +14,133 @@ function wrappedDelta(value: number, span: number): number {
 }
 
 describe('ambient traffic simulation', () => {
+	it('accelerates traffic from spawn speed toward its cruise speed', () => {
+		const traffic = createTrafficSimulation({ layout: generateWorld(6767), seed: 6767, maxVehicles: 1 });
+		const initialSpeed = traffic.vehicles[0].speed;
+
+		for (let frame = 0; frame < 10; frame += 1) traffic.step(0.05);
+
+		expect(traffic.vehicles[0].speed).toBeGreaterThan(initialSpeed);
+		expect(traffic.vehicles[0].longitudinalLoad).toBeGreaterThan(0);
+	});
+
+	it('brakes and eases aside before reaching a blocked lane', () => {
+		const traffic = createTrafficSimulation({ layout: generateWorld(6767), seed: 6767, maxVehicles: 1 });
+		const vehicle = traffic.vehicles[0];
+		const forwardX = Math.sin(vehicle.heading);
+		const forwardZ = Math.cos(vehicle.heading);
+		const initialSpeed = vehicle.speed;
+
+		traffic.step(0.15, {
+			x: vehicle.x + forwardX * 4,
+			z: vehicle.z + forwardZ * 4,
+			velocityX: 0,
+			velocityZ: 0,
+			radius: 1.2,
+			mass: 1.55,
+		});
+
+		expect(vehicle.speed).toBeLessThan(initialSpeed);
+		expect(vehicle.longitudinalLoad).toBeLessThan(0);
+		expect(Math.abs(vehicle.avoidanceOffset)).toBeGreaterThan(0);
+	});
+
+	it('returns player recoil and launches traffic after a collision', () => {
+		const traffic = createTrafficSimulation({ layout: generateWorld(6767), seed: 6767, maxVehicles: 1 });
+		const vehicle = traffic.vehicles[0];
+		const forwardX = Math.sin(vehicle.heading);
+		const forwardZ = Math.cos(vehicle.heading);
+		const before = { x: vehicle.x, z: vehicle.z };
+		const impacts = traffic.resolvePlayerImpacts({
+			x: vehicle.x - forwardX * 0.5,
+			z: vehicle.z - forwardZ * 0.5,
+			velocityX: forwardX * 20,
+			velocityZ: forwardZ * 20,
+			radius: 1.2,
+			mass: 1.55,
+		});
+
+		expect(impacts).toHaveLength(1);
+		expect(impacts[0].velocityX * forwardX + impacts[0].velocityZ * forwardZ).toBeLessThan(0);
+		expect((vehicle.x - before.x) * forwardX + (vehicle.z - before.z) * forwardZ).toBeGreaterThan(0);
+		expect(vehicle.verticalVelocity).toBeGreaterThan(0);
+		expect(vehicle.impactIntensity).toBeGreaterThan(0);
+		expect(vehicle.damage).toBeGreaterThan(0);
+		const speedBeforeRecovery = vehicle.speed;
+
+		traffic.step(0.05);
+
+		expect(vehicle.verticalOffset).toBeGreaterThan(0);
+		expect(vehicle.speed).toBeLessThan(speedBeforeRecovery);
+		expect(vehicle.longitudinalLoad).toBeLessThan(0);
+
+		for (let frame = 0; frame < 120; frame += 1) traffic.step(0.05);
+
+		expect(vehicle.verticalOffset).toBe(0);
+		expect(vehicle.verticalVelocity).toBe(0);
+		expect(vehicle.speed).toBeGreaterThan(0);
+	});
+
+	it('keeps low-speed overlaps grounded', () => {
+		const traffic = createTrafficSimulation({ layout: generateWorld(6767), seed: 6767, maxVehicles: 1 });
+		const vehicle = traffic.vehicles[0];
+
+		traffic.resolvePlayerImpacts({
+			x: vehicle.x,
+			z: vehicle.z,
+			velocityX: vehicle.velocityX,
+			velocityZ: vehicle.velocityZ,
+			radius: 1.2,
+			mass: 1.55,
+		});
+
+		expect(vehicle.verticalVelocity).toBe(0);
+		expect(vehicle.damage).toBe(0);
+	});
+
+	it('carries backward recoil after a head-on impact', () => {
+		const traffic = createTrafficSimulation({ layout: generateWorld(6767), seed: 6767, maxVehicles: 1 });
+		const vehicle = traffic.vehicles[0];
+		const forwardX = Math.sin(vehicle.heading);
+		const forwardZ = Math.cos(vehicle.heading);
+
+		traffic.resolvePlayerImpacts({
+			x: vehicle.x + forwardX * 0.5,
+			z: vehicle.z + forwardZ * 0.5,
+			velocityX: -forwardX * 20,
+			velocityZ: -forwardZ * 20,
+			radius: 1.2,
+			mass: 1.55,
+		});
+
+		expect(vehicle.velocityX * forwardX + vehicle.velocityZ * forwardZ).toBeLessThan(0);
+	});
+
+	it('throws damaged traffic into air after a strong player impact', () => {
+		const traffic = createTrafficSimulation({ layout: generateWorld(6767), seed: 6767, maxVehicles: 1 });
+		const vehicle = traffic.vehicles[0];
+		const forwardX = Math.sin(vehicle.heading);
+		const forwardZ = Math.cos(vehicle.heading);
+		const impacts = traffic.resolvePlayerImpacts({
+			x: vehicle.x - forwardX * 0.5,
+			z: vehicle.z - forwardZ * 0.5,
+			velocityX: forwardX * 70,
+			velocityZ: forwardZ * 70,
+			radius: 1.2,
+			mass: 1.55,
+		});
+
+		expect(impacts).toHaveLength(1);
+		expect(impacts[0].damage).toBeGreaterThan(0.25);
+		expect(vehicle.verticalVelocity).toBeGreaterThan(7);
+		expect(vehicle.damage).toBeGreaterThan(0.25);
+		expect(vehicle.damage).toBeCloseTo(impacts[0].damage, 8);
+
+		traffic.step(0.1);
+
+		expect(vehicle.verticalOffset).toBeGreaterThan(0.5);
+	});
+
 	it('keeps each traffic vehicle facing its direction of travel', () => {
 		const world = generateWorld(6767);
 		const traffic = createTrafficSimulation({ layout: world, seed: 6767, maxVehicles: 1 });
