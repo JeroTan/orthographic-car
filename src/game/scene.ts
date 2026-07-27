@@ -34,6 +34,7 @@ export interface GameSceneOptions {
 
 export interface GameScene {
 	wake(): void;
+	unstick(): boolean;
 	setCarColor(color: PorscheColor): void;
 	destroy(): void;
 }
@@ -456,6 +457,11 @@ export function createGameScene(container: HTMLElement, options: GameSceneOption
 
 	return {
 		wake: startLoop,
+		unstick() {
+			const didUnstick = controller.unstick();
+			if (didUnstick) startLoop();
+			return didUnstick;
+		},
 		setCarColor(color) {
 			vehicleView.setColor(color);
 			startLoop();

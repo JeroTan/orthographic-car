@@ -40,6 +40,7 @@ export interface VehicleState extends VehicleCrashState {
 export interface VehicleController {
 	readonly state: VehicleState;
 	step(deltaSeconds: number, input: VehicleInput): void;
+	unstick(): boolean;
 	getCollisionBody(): VehicleImpactBody;
 	applyImpact(impact: VehicleImpactEffect): void;
 }
@@ -153,6 +154,9 @@ const STATIC_COLLISION_RESTITUTION = 0.34;
 const STATIC_COLLISION_DAMAGE_SPEED = worldSpeedFromKmh(24);
 const STATIC_COLLISION_LAUNCH_SPEED = worldSpeedFromKmh(58);
 const STATIC_COLLISION_LAUNCH_FACTOR = 0.18;
+const UNSTUCK_SEARCH_STEP = 0.5;
+const UNSTUCK_SEARCH_MAX_DISTANCE = 12;
+const UNSTUCK_SEARCH_DIRECTIONS = 12;
 const AIRBORNE_INPUT: VehicleInput = {
 	accelerate: false,
 	brake: false,
@@ -376,6 +380,36 @@ function collisionNormal(
 	return { x: -Math.sin(heading), z: -Math.cos(heading) };
 }
 
+function findCollisionEscape(
+	collision: CollisionQuery,
+	x: number,
+	z: number,
+	heading: number,
+	worldSpan: number,
+): { x: number; z: number } | undefined {
+	const contact = collisionPointAt(collision, x, z, heading);
+	if (!contact) return undefined;
+	const normal = collisionNormal(collision, contact, 0, 0, heading);
+	const normalAngle = Math.atan2(normal.x, normal.z);
+
+	for (
+		let distance = UNSTUCK_SEARCH_STEP;
+		distance <= UNSTUCK_SEARCH_MAX_DISTANCE;
+		distance += UNSTUCK_SEARCH_STEP
+	) {
+		for (let direction = 0; direction < UNSTUCK_SEARCH_DIRECTIONS; direction += 1) {
+			const angle = normalAngle + (direction * Math.PI * 2) / UNSTUCK_SEARCH_DIRECTIONS;
+			const candidate = {
+				x: wrapCoordinate(x + Math.sin(angle) * distance, worldSpan),
+				z: wrapCoordinate(z + Math.cos(angle) * distance, worldSpan),
+			};
+			if (!collisionPointAt(collision, candidate.x, candidate.z, heading)) return candidate;
+		}
+	}
+
+	return undefined;
+}
+
 export function createVehicleController(config: VehicleConfig): VehicleController {
 	const state: VehicleState = {
 		x: 0,
@@ -399,6 +433,28 @@ export function createVehicleController(config: VehicleConfig): VehicleControlle
 	let impactVelocityX = 0;
 	let impactVelocityZ = 0;
 
+	function unstick(): boolean {
+		if (!config.collision) return false;
+		const escape = findCollisionEscape(
+			config.collision,
+			state.x,
+			state.z,
+			state.heading,
+			config.worldSpan,
+		);
+		if (!escape) return false;
+
+		state.x = escape.x;
+		state.z = escape.z;
+		state.speed = 0;
+		state.slipAngle = 0;
+		velocityX = 0;
+		velocityZ = 0;
+		impactVelocityX = 0;
+		impactVelocityZ = 0;
+		return true;
+	}
+
 	return {
 		state,
 		step(deltaSeconds, input) {
@@ -419,6 +475,7 @@ export function createVehicleController(config: VehicleConfig): VehicleControlle
 				}
 			}
 			stepVehicleCrashState(state, deltaSeconds, airborne);
+			if (!airborne) unstick();
 			const controlInput = airborne ? AIRBORNE_INPUT : input;
 			const surface = config.terrain?.surfaceAt(state.x, state.z) ?? 'road';
 			const handling = SURFACE_HANDLING[surface];
@@ -564,6 +621,7 @@ export function createVehicleController(config: VehicleConfig): VehicleControlle
 				launchSlip,
 			);
 		},
+		unstick,
 		getCollisionBody() {
 			return {
 				x: state.x,

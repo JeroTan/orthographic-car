@@ -154,6 +154,11 @@ function generateNewWorld(): void {
   startGame();
 }
 
+function unstackCar(): void {
+  releaseControls();
+  game?.unstick();
+}
+
 function handlePointerStart(event: PointerEvent, control: Control): void {
   const button = event.currentTarget as HTMLButtonElement;
   button.setPointerCapture(event.pointerId);
@@ -188,14 +193,20 @@ onUnmounted(() => {
       </div>
 
       <div class="world-panel">
-        <div>
+        <div class="world-seed">
           <span class="world-label">World seed</span>
           <strong>{{ String(seed).padStart(6, "0") }}</strong>
         </div>
-        <button type="button" @click="generateNewWorld">
-          <span aria-hidden="true">↻</span
-          ><span class="button-label">New map</span>
-        </button>
+        <div class="world-actions">
+          <button type="button" @click="generateNewWorld">
+            <span aria-hidden="true">↻</span
+            ><span class="button-label">New map</span>
+          </button>
+          <button type="button" aria-label="Unstack car" @click="unstackCar">
+            <span aria-hidden="true">↥</span
+            ><span class="button-label">Unstack</span>
+          </button>
+        </div>
       </div>
     </header>
 
@@ -372,9 +383,14 @@ h1 {
   pointer-events: auto;
 }
 
-.world-panel > div {
+.world-seed {
   display: grid;
   gap: 0.12rem;
+}
+
+.world-actions {
+  display: flex;
+  gap: 0.4rem;
 }
 
 .world-panel strong {

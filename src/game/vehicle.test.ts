@@ -68,7 +68,7 @@ describe('vehicle controller', () => {
 			worldSpan: 144,
 			roads: [],
 			props: [],
-			buildings: [{ variant: 0 as const, x: 0, z: 5, rotation: 0, scale: 1 }],
+			buildings: [{ variant: 0 as const, x: 0, z: 6, rotation: 0, scale: 1 }],
 		};
 		const vehicle = createVehicleController({
 			worldSpan: world.worldSpan,
@@ -81,6 +81,44 @@ describe('vehicle controller', () => {
 		expect(vehicle.getCollisionBody().velocityZ).toBeLessThan(0);
 		expect(vehicle.state.impactIntensity).toBeGreaterThan(0);
 		expect(vehicle.state.damage).toBeGreaterThan(0);
+	});
+
+	it('ejects car when a hard impact leaves it embedded in solid scenery', () => {
+		const world = {
+			gridSize: 18,
+			tileSize: 8,
+			worldSpan: 144,
+			roads: [],
+			props: [],
+			buildings: [{ variant: 0 as const, x: 0, z: 0, rotation: 0, scale: 1 }],
+		};
+		const vehicle = createVehicleController({
+			worldSpan: world.worldSpan,
+			collision: createCollisionIndex(world),
+		});
+
+		vehicle.step(0.05, { accelerate: false, brake: false, left: false, right: false });
+
+		expect(Math.hypot(vehicle.state.x, vehicle.state.z)).toBeGreaterThan(4);
+	});
+
+	it('offers manual unstack recovery for an embedded car', () => {
+		const world = {
+			gridSize: 18,
+			tileSize: 8,
+			worldSpan: 144,
+			roads: [],
+			props: [],
+			buildings: [{ variant: 0 as const, x: 0, z: 0, rotation: 0, scale: 1 }],
+		};
+		const vehicle = createVehicleController({
+			worldSpan: world.worldSpan,
+			collision: createCollisionIndex(world),
+		});
+
+		expect(vehicle.unstick()).toBe(true);
+		expect(Math.hypot(vehicle.state.x, vehicle.state.z)).toBeGreaterThan(4);
+		expect(vehicle.unstick()).toBe(false);
 	});
 
 	it('shows reverse motion as positive speedometer speed', () => {
