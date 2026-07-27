@@ -256,7 +256,7 @@ describe('procedural world', () => {
 		});
 	});
 
-	it('includes roadside lamps in the collision world', () => {
+	it('does not add roadside lamps to the collision world', () => {
 		const world = {
 			gridSize: 18,
 			tileSize: 8,
@@ -265,7 +265,7 @@ describe('procedural world', () => {
 			props: [],
 		};
 
-		expect(createCollisionIndex(world).intersectsCircle(8.5, 4, 0.5)).toBe(true);
+		expect(createCollisionIndex(world).intersectsCircle(8.5, 4, 0.5)).toBe(false);
 	});
 
 	it('treats residential buildings as solid scenery', () => {
@@ -277,7 +277,7 @@ describe('procedural world', () => {
 		);
 	});
 
-	it('places roadside lamps outside road tiles', () => {
+	it('does not generate roadside lamps', () => {
 		const world = {
 			gridSize: 18,
 			tileSize: 8,
@@ -285,12 +285,7 @@ describe('procedural world', () => {
 			roads: [{ x: 9, z: 9 }],
 			props: [],
 		};
-		const terrainIndex = createTerrainIndex(world);
-		const posts = getRoadsidePosts(world);
 
-		expect({
-			count: posts.length,
-			allOutsideRoad: posts.every((post) => !terrainIndex.isRoadAt(post.x, post.z)),
-		}).toEqual({ count: 1, allOutsideRoad: true });
+		expect(getRoadsidePosts(world)).toEqual([]);
 	});
 });

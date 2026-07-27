@@ -58,11 +58,17 @@ export interface TerrainIndex {
 
 export interface CollisionIndex {
 	intersectsCircle(x: number, z: number, radius: number): boolean;
+	normalAt(x: number, z: number, radius: number): { x: number; z: number } | undefined;
 }
 
 function wrappedDistance(a: number, b: number, span: number) {
 	const direct = Math.abs(a - b) % span;
 	return Math.min(direct, span - direct);
+}
+
+function wrappedDelta(value: number, span: number) {
+	const halfSpan = span / 2;
+	return ((((value + halfSpan) % span) + span) % span) - halfSpan;
 }
 
 function wrapWorldCoordinate(value: number, span: number) {
@@ -559,39 +565,8 @@ function layoutTileKeyAtWorldPosition(layout: RoadLayout, x: number, z: number):
 }
 
 export function getRoadsidePosts(layout: RoadLayout): WorldPoint[] {
-	const roadTiles = new Set(layout.roads.map((road) => road.z * layout.gridSize + road.x));
-	const directions = [
-		{ x: 1, z: 0 },
-		{ x: -1, z: 0 },
-		{ x: 0, z: 1 },
-		{ x: 0, z: -1 },
-	] as const;
-	const roadsideOffset = layout.tileSize / 2 + 0.5;
-
-	return layout.roads.flatMap((road, index) => {
-		if (index % 9 !== 0) return [];
-
-		for (const direction of directions) {
-			const neighborX = wrapLayoutIndex(road.x + direction.x, layout.gridSize);
-			const neighborZ = wrapLayoutIndex(road.z + direction.z, layout.gridSize);
-			if (roadTiles.has(neighborZ * layout.gridSize + neighborX)) continue;
-
-			return [
-				{
-					x: wrapWorldCoordinate(
-						(road.x + 0.5) * layout.tileSize - layout.worldSpan / 2 + direction.x * roadsideOffset,
-						layout.worldSpan,
-					),
-					z: wrapWorldCoordinate(
-						(road.z + 0.5) * layout.tileSize - layout.worldSpan / 2 + direction.z * roadsideOffset,
-						layout.worldSpan,
-					),
-				},
-			];
-		}
-
-		return [];
-	});
+	void layout;
+	return [];
 }
 
 export function createCollisionIndex(
@@ -612,8 +587,6 @@ export function createCollisionIndex(
 	for (const building of layout.buildings ?? []) {
 		obstacles.push({ x: building.x, z: building.z, radius: 3.5 * building.scale });
 	}
-	for (const post of getRoadsidePosts(layout)) obstacles.push({ ...post, radius: 0.25 });
-
 	return {
 		intersectsCircle(x, z, radius) {
 			return obstacles.some((obstacle) => {
@@ -622,6 +595,24 @@ export function createCollisionIndex(
 				const minimumDistance = radius + obstacle.radius;
 				return distanceX * distanceX + distanceZ * distanceZ < minimumDistance * minimumDistance;
 			});
+		},
+		normalAt(x, z, radius) {
+			let nearest: { x: number; z: number; distanceSquared: number } | undefined;
+
+			for (const obstacle of obstacles) {
+				const deltaX = wrappedDelta(x - obstacle.x, layout.worldSpan);
+				const deltaZ = wrappedDelta(z - obstacle.z, layout.worldSpan);
+				const distanceSquared = deltaX * deltaX + deltaZ * deltaZ;
+				const minimumDistance = radius + obstacle.radius;
+				if (distanceSquared >= minimumDistance * minimumDistance) continue;
+				if (!nearest || distanceSquared < nearest.distanceSquared) {
+					nearest = { x: deltaX, z: deltaZ, distanceSquared };
+				}
+			}
+
+			if (!nearest || nearest.distanceSquared <= 0.000001) return undefined;
+			const distance = Math.sqrt(nearest.distanceSquared);
+			return { x: nearest.x / distance, z: nearest.z / distance };
 		},
 	};
 }

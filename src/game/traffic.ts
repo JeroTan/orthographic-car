@@ -84,6 +84,8 @@ interface SimulatedVehicle {
 	impactVelocityZ: number;
 	avoidanceOffset: number;
 	avoidanceTargetOffset: number;
+	blockedSeconds: number;
+	rerouteCooldown: number;
 	recoverySeconds: number;
 	collisionCooldown: number;
 }
@@ -112,6 +114,9 @@ const TRAFFIC_AVOIDANCE_GAP = 0.35;
 const TRAFFIC_AVOIDANCE_CORRIDOR = 0.7;
 const TRAFFIC_AVOIDANCE_OFFSET = 0.68;
 const TRAFFIC_AVOIDANCE_RESPONSE = 5;
+const TRAFFIC_BLOCKED_REROUTE_DELAY = 0.75;
+const TRAFFIC_REROUTE_COOLDOWN = 1.5;
+const TRAFFIC_REROUTE_TURN_PROGRESS = 0.18;
 const TRAFFIC_AIRBORNE_CLOSING_SPEED = 5;
 const TRAFFIC_AIRBORNE_LAUNCH_FACTOR = 0.22;
 const PLAYER_AIRBORNE_LAUNCH_FACTOR = 0.14;
@@ -281,6 +286,10 @@ function aimVehicle(vehicle: SimulatedVehicle, direction: Direction): void {
 	vehicle.direction = direction;
 }
 
+function sameDirection(first: Direction, second: Direction): boolean {
+	return first.dx === second.dx && first.dz === second.dz;
+}
+
 export function createTrafficSimulation(options: TrafficSimulationOptions): TrafficSimulation {
 	const { layout } = options;
 	const random = createRandom(options.seed ^ TRAFFIC_RANDOM_SEED_SALT);
@@ -381,6 +390,8 @@ export function createTrafficSimulation(options: TrafficSimulationOptions): Traf
 			impactVelocityZ: 0,
 			avoidanceOffset: 0,
 			avoidanceTargetOffset: 0,
+			blockedSeconds: 0,
+			rerouteCooldown: 0,
 			recoverySeconds: 0,
 			collisionCooldown: 0,
 		};
@@ -449,6 +460,31 @@ export function createTrafficSimulation(options: TrafficSimulationOptions): Traf
 			radius: vehicle.radius,
 			mass: vehicle.mass,
 		};
+	}
+
+	function rerouteBlockedVehicle(vehicle: SimulatedVehicle): boolean {
+		const neighbors = roadNeighbors(layout, roadTiles, vehicle.tileX, vehicle.tileZ);
+		const turns = neighbors.filter(
+			(direction) =>
+				!sameDirection(direction, vehicle.direction) && !isOpposite(direction, vehicle.direction),
+		);
+
+		if (vehicle.progress <= TRAFFIC_REROUTE_TURN_PROGRESS && turns.length > 0) {
+			aimVehicle(vehicle, turns[Math.floor(random() * turns.length)]);
+			return true;
+		}
+
+		// No nearby junction: reverse along same segment. Moving route origin to
+		// previous destination preserves position, then vehicle drives away from jam.
+		const previousDirection = vehicle.direction;
+		vehicle.tileX = wrapIndex(vehicle.tileX + previousDirection.dx, layout.gridSize);
+		vehicle.tileZ = wrapIndex(vehicle.tileZ + previousDirection.dz, layout.gridSize);
+		vehicle.progress = 1 - vehicle.progress;
+		aimVehicle(vehicle, {
+			dx: (-previousDirection.dx) as Direction['dx'],
+			dz: (-previousDirection.dz) as Direction['dz'],
+		});
+		return true;
 	}
 
 	function airborneVelocity(closingSpeed: number, factor: number): number {
@@ -572,7 +608,21 @@ export function createTrafficSimulation(options: TrafficSimulationOptions): Traf
 				const previousHeading = vehicle.state.heading;
 				const airborne =
 					vehicle.state.verticalOffset > 0 || vehicle.state.verticalVelocity > 0;
-				const avoidance = avoidanceFor(vehicle, obstacles);
+				let avoidance = avoidanceFor(vehicle, obstacles);
+				const isBlocked =
+					avoidance.brake > 0.85 &&
+					avoidance.targetSpeed < Math.max(0.35, vehicle.cruiseSpeed * 0.08);
+				vehicle.blockedSeconds = isBlocked ? vehicle.blockedSeconds + delta : 0;
+				vehicle.rerouteCooldown = Math.max(0, vehicle.rerouteCooldown - delta);
+				if (
+					vehicle.blockedSeconds >= TRAFFIC_BLOCKED_REROUTE_DELAY &&
+					vehicle.rerouteCooldown === 0 &&
+					rerouteBlockedVehicle(vehicle)
+				) {
+					vehicle.blockedSeconds = 0;
+					vehicle.rerouteCooldown = TRAFFIC_REROUTE_COOLDOWN;
+					avoidance = avoidanceFor(vehicle, obstacles);
+				}
 				vehicle.avoidanceTargetOffset = avoidance.offset;
 				const avoidanceResponse = 1 - Math.exp(-TRAFFIC_AVOIDANCE_RESPONSE * delta);
 				vehicle.avoidanceOffset +=

@@ -85,6 +85,33 @@ describe('ambient traffic simulation', () => {
 		expect(Math.abs(vehicle.avoidanceOffset)).toBeGreaterThan(0);
 	});
 
+	it('escapes a persistent blocker instead of freezing in its lane', () => {
+		const world = generateWorld(6767);
+		const traffic = createTrafficSimulation({ layout: world, seed: 6767, maxVehicles: 1 });
+		const vehicle = traffic.vehicles[0];
+		const forwardX = Math.sin(vehicle.heading);
+		const forwardZ = Math.cos(vehicle.heading);
+		const start = { x: vehicle.x, z: vehicle.z };
+		const blocker = {
+			x: vehicle.x + forwardX * 3,
+			z: vehicle.z + forwardZ * 3,
+			velocityX: 0,
+			velocityZ: 0,
+			radius: 1.4,
+			mass: 2,
+		};
+
+		for (let frame = 0; frame < 120; frame += 1) traffic.step(0.05, blocker);
+
+		expect(vehicle.speed).toBeGreaterThan(1);
+		expect(
+			Math.hypot(
+				wrappedDelta(vehicle.x - start.x, world.worldSpan),
+				wrappedDelta(vehicle.z - start.z, world.worldSpan),
+			),
+		).toBeGreaterThan(3);
+	});
+
 	it('returns player recoil and launches traffic after a collision', () => {
 		const traffic = createTrafficSimulation({ layout: generateWorld(6767), seed: 6767, maxVehicles: 1 });
 		const vehicle = traffic.vehicles[0];

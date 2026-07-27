@@ -61,6 +61,28 @@ describe('vehicle controller', () => {
 		expect(vehicle.state.verticalVelocity).toBe(0);
 	});
 
+	it('recoils from immovable scenery instead of deleting motion', () => {
+		const world = {
+			gridSize: 18,
+			tileSize: 8,
+			worldSpan: 144,
+			roads: [],
+			props: [],
+			buildings: [{ variant: 0 as const, x: 0, z: 5, rotation: 0, scale: 1 }],
+		};
+		const vehicle = createVehicleController({
+			worldSpan: world.worldSpan,
+			collision: createCollisionIndex(world),
+		});
+		vehicle.state.speed = toWorldSpeed(80);
+
+		vehicle.step(0.05, { accelerate: false, brake: false, left: false, right: false });
+
+		expect(vehicle.getCollisionBody().velocityZ).toBeLessThan(0);
+		expect(vehicle.state.impactIntensity).toBeGreaterThan(0);
+		expect(vehicle.state.damage).toBeGreaterThan(0);
+	});
+
 	it('shows reverse motion as positive speedometer speed', () => {
 		const reverseWorldSpeed = toWorldSpeed(120);
 		expect([toSpeedometerKmh(reverseWorldSpeed), toSpeedometerKmh(-reverseWorldSpeed)]).toEqual([
@@ -209,7 +231,8 @@ describe('vehicle controller', () => {
 		vehicle.step(0.05, { accelerate: false, brake: false, left: false, right: false });
 
 		expect(vehicle.state.z).toBe(0);
-		expect(vehicle.state.speed).toBe(0);
+		expect(vehicle.state.impactIntensity).toBeGreaterThan(0);
+		expect(vehicle.state.damage).toBeGreaterThan(0);
 	});
 
 	it('reaches a lower top speed on meadow than on road', () => {

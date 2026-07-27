@@ -12,7 +12,6 @@ import {
 	createCollisionIndex,
 	createTerrainIndex,
 	generateWorld,
-	getRoadsidePosts,
 	REPEATED_WORLD_OFFSETS,
 	type PropKind,
 	type PropPlacement,
@@ -176,10 +175,6 @@ function addWorld(scene: THREE.Scene, layout: WorldLayout, onAssetReady: () => v
 	scene.add(ground);
 
 	const repeatedRoadTransforms: THREE.Matrix4[] = [];
-	const postTransforms: THREE.Matrix4[] = [];
-	const capTransforms: THREE.Matrix4[] = [];
-	const roadsidePosts = getRoadsidePosts(layout);
-
 	for (const mapX of REPEATED_WORLD_OFFSETS) {
 		for (const mapZ of REPEATED_WORLD_OFFSETS) {
 			repeatedRoadTransforms.push(
@@ -194,12 +189,6 @@ function addWorld(scene: THREE.Scene, layout: WorldLayout, onAssetReady: () => v
 				),
 			);
 
-			for (const post of roadsidePosts) {
-				const x = post.x + mapX * layout.worldSpan;
-				const z = post.z + mapZ * layout.worldSpan;
-				postTransforms.push(matrixAt(x, 0.72, z, 0, 0.14, 1.35, 0.14));
-				capTransforms.push(matrixAt(x, 1.52, z, 0, 0.27, 0.27, 0.27));
-			}
 		}
 	}
 
@@ -241,18 +230,6 @@ function addWorld(scene: THREE.Scene, layout: WorldLayout, onAssetReady: () => v
 			0.047,
 			0.02,
 		),
-	);
-	addInstancedMesh(
-		scene,
-		new THREE.CylinderGeometry(1, 1, 1, 5),
-		new THREE.MeshLambertMaterial({ color: 0x473e36 }),
-		postTransforms,
-	);
-	addInstancedMesh(
-		scene,
-		new THREE.OctahedronGeometry(1, 0),
-		new THREE.MeshBasicMaterial({ color: 0xffd56b }),
-		capTransforms,
 	);
 
 	const trees = repeatedProps(layout, 'tree');

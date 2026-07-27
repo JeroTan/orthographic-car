@@ -46,6 +46,7 @@ export interface VehicleController {
 
 export interface CollisionQuery {
 	intersectsCircle(x: number, z: number, radius: number): boolean;
+	normalAt?(x: number, z: number, radius: number): { x: number; z: number } | undefined;
 }
 
 export interface TerrainQuery {
@@ -148,6 +149,10 @@ const IMPACT_GROUND_STOP_SPEED = worldAccelerationFromMps2(0.8);
 const MAX_IMPACT_VERTICAL_SPEED = worldAccelerationFromMps2(9.5);
 const MAX_IMPACT_KNOCKBACK_SPEED = worldSpeedFromKmh(145);
 const IMPACT_AIR_VELOCITY_DAMPING = 0.35;
+const STATIC_COLLISION_RESTITUTION = 0.34;
+const STATIC_COLLISION_DAMAGE_SPEED = worldSpeedFromKmh(24);
+const STATIC_COLLISION_LAUNCH_SPEED = worldSpeedFromKmh(58);
+const STATIC_COLLISION_LAUNCH_FACTOR = 0.18;
 const AIRBORNE_INPUT: VehicleInput = {
 	accelerate: false,
 	brake: false,
@@ -300,13 +305,18 @@ function updatePhysicsFeedback(
 	state.skidIntensity = Math.max(brakeSkid, driftSkid);
 }
 
-function collidesAt(collision: CollisionQuery, x: number, z: number, heading: number): boolean {
+function collisionPointAt(
+	collision: CollisionQuery,
+	x: number,
+	z: number,
+	heading: number,
+): { x: number; z: number } | undefined {
 	const offsetX = Math.sin(heading) * CAR_COLLISION_OFFSET;
 	const offsetZ = Math.cos(heading) * CAR_COLLISION_OFFSET;
-	return (
-		collision.intersectsCircle(x + offsetX, z + offsetZ, CAR_COLLISION_RADIUS) ||
-		collision.intersectsCircle(x - offsetX, z - offsetZ, CAR_COLLISION_RADIUS)
-	);
+	const front = { x: x + offsetX, z: z + offsetZ };
+	if (collision.intersectsCircle(front.x, front.z, CAR_COLLISION_RADIUS)) return front;
+	const rear = { x: x - offsetX, z: z - offsetZ };
+	return collision.intersectsCircle(rear.x, rear.z, CAR_COLLISION_RADIUS) ? rear : undefined;
 }
 
 function collidesAlongPath(
@@ -317,7 +327,7 @@ function collidesAlongPath(
 	endZ: number,
 	heading: number,
 	worldSpan: number,
-): boolean {
+): { x: number; z: number } | undefined {
 	const rawDeltaX = endX - startX;
 	const rawDeltaZ = endZ - startZ;
 	const deltaX =
@@ -336,19 +346,34 @@ function collidesAlongPath(
 
 	for (let sample = 1; sample <= sampleCount; sample += 1) {
 		const progress = sample / sampleCount;
-		if (
-			collidesAt(
-				collision,
-				wrapCoordinate(startX + deltaX * progress, worldSpan),
-				wrapCoordinate(startZ + deltaZ * progress, worldSpan),
-				heading,
-			)
-		) {
-			return true;
-		}
+		const point = collisionPointAt(
+			collision,
+			wrapCoordinate(startX + deltaX * progress, worldSpan),
+			wrapCoordinate(startZ + deltaZ * progress, worldSpan),
+			heading,
+		);
+		if (point) return point;
 	}
 
-	return false;
+	return undefined;
+}
+
+function collisionNormal(
+	collision: CollisionQuery,
+	contact: { x: number; z: number },
+	velocityX: number,
+	velocityZ: number,
+	heading: number,
+): { x: number; z: number } {
+	const candidate = collision.normalAt?.(contact.x, contact.z, CAR_COLLISION_RADIUS);
+	const candidateLength = candidate ? Math.hypot(candidate.x, candidate.z) : 0;
+	if (candidate && Number.isFinite(candidateLength) && candidateLength > 0.0001) {
+		return { x: candidate.x / candidateLength, z: candidate.z / candidateLength };
+	}
+
+	const velocityLength = Math.hypot(velocityX, velocityZ);
+	if (velocityLength > 0.0001) return { x: -velocityX / velocityLength, z: -velocityZ / velocityLength };
+	return { x: -Math.sin(heading), z: -Math.cos(heading) };
 }
 
 export function createVehicleController(config: VehicleConfig): VehicleController {
@@ -449,23 +474,82 @@ export function createVehicleController(config: VehicleConfig): VehicleControlle
 				config.worldSpan,
 			);
 
-			if (
-				config.collision &&
-				!airborne &&
-				collidesAlongPath(
+			const collisionContact =
+				config.collision && !airborne
+					? collidesAlongPath(
+							config.collision,
+							state.x,
+							state.z,
+							nextX,
+							nextZ,
+							state.heading,
+							config.worldSpan,
+						)
+					: undefined;
+
+			if (collisionContact && config.collision) {
+				const travelVelocityX = velocityX + impactVelocityX;
+				const travelVelocityZ = velocityZ + impactVelocityZ;
+				const normal = collisionNormal(
 					config.collision,
-					state.x,
-					state.z,
-					nextX,
-					nextZ,
+					collisionContact,
+					travelVelocityX,
+					travelVelocityZ,
 					state.heading,
-					config.worldSpan,
-				)
-			) {
-				state.speed = 0;
-				state.slipAngle = 0;
-				velocityX = 0;
-				velocityZ = 0;
+				);
+				const inwardSpeed = Math.max(
+					0,
+					-(travelVelocityX * normal.x + travelVelocityZ * normal.z),
+				);
+
+				if (inwardSpeed > 0) {
+					const reflectedVelocityX =
+						travelVelocityX + normal.x * inwardSpeed * (1 + STATIC_COLLISION_RESTITUTION);
+					const reflectedVelocityZ =
+						travelVelocityZ + normal.z * inwardSpeed * (1 + STATIC_COLLISION_RESTITUTION);
+					const forwardX = Math.sin(state.heading);
+					const forwardZ = Math.cos(state.heading);
+					const reflectedSpeed = Math.max(
+						-MAX_REVERSE_SPEED,
+						Math.min(
+							MAX_SPEED,
+							reflectedVelocityX * forwardX + reflectedVelocityZ * forwardZ,
+						),
+					);
+					const residualVelocity = clampVelocityMagnitude(
+						reflectedVelocityX - forwardX * reflectedSpeed,
+						reflectedVelocityZ - forwardZ * reflectedSpeed,
+						MAX_IMPACT_KNOCKBACK_SPEED,
+					);
+					const intensity = Math.max(
+						0,
+						Math.min(1, inwardSpeed / STATIC_COLLISION_LAUNCH_SPEED),
+					);
+					const verticalVelocity = Math.min(
+						MAX_IMPACT_VERTICAL_SPEED,
+						Math.max(0, inwardSpeed - STATIC_COLLISION_LAUNCH_SPEED) *
+							STATIC_COLLISION_LAUNCH_FACTOR,
+					);
+
+					state.speed = reflectedSpeed;
+					velocityX = forwardX * reflectedSpeed;
+					velocityZ = forwardZ * reflectedSpeed;
+					impactVelocityX = residualVelocity.x;
+					impactVelocityZ = residualVelocity.z;
+					state.verticalVelocity = Math.max(state.verticalVelocity, verticalVelocity);
+					state.impactIntensity = Math.max(state.impactIntensity, intensity);
+					state.damage = Math.min(
+						1,
+						state.damage + Math.max(0, (inwardSpeed - STATIC_COLLISION_DAMAGE_SPEED) / inwardSpeed) * 0.3,
+					);
+					applyVehicleCrashImpulse(state, {
+						heading: state.heading,
+						velocityX: reflectedVelocityX - travelVelocityX,
+						velocityZ: reflectedVelocityZ - travelVelocityZ,
+						intensity,
+						verticalVelocity,
+					});
+				}
 			} else {
 				state.x = nextX;
 				state.z = nextZ;
