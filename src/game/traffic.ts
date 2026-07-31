@@ -26,6 +26,11 @@ import {
 	type VehicleMotionInstruction,
 	type VehicleMotionProfile,
 } from './vehicle-motion';
+import {
+	lanesPerDirection,
+	rightHandLaneOffset,
+	roadProfileAt,
+} from './road-network';
 import type { RoadLayout } from './world';
 
 export const DEFAULT_TRAFFIC_VEHICLE_COUNT = 20;
@@ -43,6 +48,8 @@ export interface TrafficVehicleState extends VehicleCrashState {
 	heading: number;
 	/** Positive means vehicle's right-hand lane relative to heading. */
 	laneOffset: number;
+	/** Zero starts beside centerline; higher values move toward road edge. */
+	laneIndex: number;
 	speed: number;
 	longitudinalLoad: number;
 	steeringAngle: number;
@@ -72,6 +79,7 @@ export interface TrafficSimulationOptions {
 	maxVehicles?: number;
 	collision?: CollisionQuery;
 	terrain?: TerrainQuery;
+	excludedSpawnTile?: { tileX: number; tileZ: number; radius: number };
 }
 
 export interface TrafficSimulation {
@@ -92,6 +100,7 @@ interface SimulatedVehicle {
 	direction: Direction;
 	plannedDirection?: Direction;
 	progress: number;
+	laneIndex: number;
 	laneOffset: number;
 	offsetFromX: number;
 	offsetFromZ: number;
@@ -124,6 +133,8 @@ interface TrafficRouteSnapshot {
 	direction: Direction;
 	plannedDirection?: Direction;
 	progress: number;
+	laneIndex: number;
+	laneOffset: number;
 	offsetFromX: number;
 	offsetFromZ: number;
 	offsetToX: number;
@@ -157,7 +168,6 @@ const TRAFFIC_AVOIDANCE_CORRIDOR = 0.7;
 const TRAFFIC_AVOIDANCE_RESPONSE = 5;
 const TRAFFIC_INTERSECTION_STOP_GAP = 0.45;
 const TRAFFIC_INTERSECTION_MIN_CONTROL_TILES = 2;
-const TRAFFIC_OPPOSING_LANE_CLEARANCE = 0.1;
 const TRAFFIC_AIRBORNE_CLOSING_SPEED = 5;
 const TRAFFIC_AIRBORNE_LAUNCH_FACTOR = 0.22;
 const PLAYER_AIRBORNE_LAUNCH_FACTOR = 0.14;
@@ -297,6 +307,44 @@ function shuffle<T>(values: T[], random: () => number): void {
 	}
 }
 
+function spreadSpawnCandidates<T extends { tileX: number; tileZ: number }>(
+	candidates: T[],
+	layout: RoadLayout,
+	random: () => number,
+): T[] {
+	const bucketCount = Math.min(4, layout.gridSize);
+	const buckets = new Map<number, T[]>();
+	for (const candidate of candidates) {
+		const bucketX = Math.min(
+			bucketCount - 1,
+			Math.floor((candidate.tileX / layout.gridSize) * bucketCount),
+		);
+		const bucketZ = Math.min(
+			bucketCount - 1,
+			Math.floor((candidate.tileZ / layout.gridSize) * bucketCount),
+		);
+		const key = bucketX + bucketZ * bucketCount;
+		const bucket = buckets.get(key) ?? [];
+		bucket.push(candidate);
+		buckets.set(key, bucket);
+	}
+
+	const activeBuckets = [...buckets.values()];
+	for (const bucket of activeBuckets) shuffle(bucket, random);
+	shuffle(activeBuckets, random);
+
+	const spread: T[] = [];
+	let depth = 0;
+	while (activeBuckets.some((bucket) => depth < bucket.length)) {
+		for (const bucket of activeBuckets) {
+			const candidate = bucket[depth];
+			if (candidate) spread.push(candidate);
+		}
+		depth += 1;
+	}
+	return spread;
+}
+
 function chooseTrafficModel(
 	random: () => number,
 	excludedIds: ReadonlySet<string>,
@@ -376,14 +424,20 @@ function updatePosition(
 	}
 }
 
-function aimVehicle(vehicle: SimulatedVehicle, direction: Direction): void {
+function aimVehicle(
+	vehicle: SimulatedVehicle,
+	direction: Direction,
+	laneOffset: number = vehicle.laneOffset,
+): void {
 	const turn = shortestAngleDelta(directionHeading(vehicle.direction), directionHeading(direction));
 	const currentOffset = lateralOffset(vehicle.direction, vehicle.laneOffset);
-	const nextOffset = lateralOffset(direction, vehicle.laneOffset);
+	const nextOffset = lateralOffset(direction, laneOffset);
 	vehicle.offsetFromX = currentOffset.x;
 	vehicle.offsetFromZ = currentOffset.z;
 	vehicle.offsetToX = nextOffset.x;
 	vehicle.offsetToZ = nextOffset.z;
+	vehicle.laneOffset = laneOffset;
+	vehicle.state.laneOffset = laneOffset;
 	vehicle.turnSteering = clamp(turn * 0.72, -0.58, 0.58);
 	vehicle.direction = direction;
 }
@@ -397,16 +451,6 @@ export function createTrafficSimulation(options: TrafficSimulationOptions): Traf
 	const vehicleCount = Math.min(
 		MAX_TRAFFIC_VEHICLES,
 		Math.max(0, Number.isFinite(requestedCount) ? Math.floor(requestedCount) : DEFAULT_TRAFFIC_VEHICLE_COUNT),
-	);
-	const widestTrafficRadius = Math.max(
-		...TRAFFIC_VEHICLE_MODELS.map((model) => trafficPhysicsFor(model).radius),
-	);
-	const laneOffset = Math.max(
-		0,
-		Math.min(
-			widestTrafficRadius + TRAFFIC_OPPOSING_LANE_CLEARANCE / 2,
-			layout.tileSize / 2 - widestTrafficRadius,
-		),
 	);
 	const roadTiles = new Set(layout.roads.map((road) => tileId(layout, road.x, road.z)));
 	const intersectionTiles = new Set(
@@ -436,23 +480,25 @@ export function createTrafficSimulation(options: TrafficSimulationOptions): Traf
 			}
 		}
 	}
-	const candidates = [...roadTiles].map((id) => ({
-		tileX: id % layout.gridSize,
-		tileZ: Math.floor(id / layout.gridSize),
-	}));
-	const center = layout.gridSize / 2;
-	const nearby = candidates.filter(
-		(candidate) =>
-			distanceBetweenTiles(candidate.tileX, candidate.tileZ, center, center, layout) >= 3 &&
-			distanceBetweenTiles(candidate.tileX, candidate.tileZ, center, center, layout) <= 12,
-	);
-	const farCandidates = candidates.filter(
-		(candidate) =>
-			distanceBetweenTiles(candidate.tileX, candidate.tileZ, center, center, layout) > 12,
-	);
-	shuffle(nearby, random);
-	shuffle(farCandidates, random);
-	const spawnCandidates = [...nearby, ...farCandidates];
+	const candidates = [...roadTiles]
+		.map((id) => ({
+			tileX: id % layout.gridSize,
+			tileZ: Math.floor(id / layout.gridSize),
+		}))
+		.filter((candidate) => {
+			const excluded = options.excludedSpawnTile;
+			return (
+				!excluded ||
+				distanceBetweenTiles(
+					candidate.tileX,
+					candidate.tileZ,
+					excluded.tileX,
+					excluded.tileZ,
+					layout,
+				) > excluded.radius
+			);
+		});
+	const spawnCandidates = spreadSpawnCandidates(candidates, layout, random);
 	const kindOrder = [...TRAFFIC_VEHICLE_KINDS];
 	shuffle(kindOrder, random);
 	const modelOrder: string[] = [];
@@ -506,6 +552,13 @@ export function createTrafficSimulation(options: TrafficSimulationOptions): Traf
 
 		// Right-hand traffic: every vehicle stays to its right of the road
 		// centerline. Opposing headings naturally occupy the opposite lane.
+		const profile = roadProfileAt(layout, candidate.tileX, candidate.tileZ);
+		const laneCount = lanesPerDirection(profile);
+		const laneIndex =
+			laneCount === 1
+				? 0
+				: (candidate.tileX + candidate.tileZ + simulated.length) % laneCount;
+		const laneOffset = rightHandLaneOffset(profile, layout.tileSize, laneIndex);
 		const heading = directionHeading(direction);
 		const offset = lateralOffset(direction, laneOffset);
 		const cruiseSpeed = toWorldSpeed(
@@ -520,6 +573,7 @@ export function createTrafficSimulation(options: TrafficSimulationOptions): Traf
 				z: 0,
 				heading,
 				laneOffset,
+				laneIndex,
 				speed: cruiseSpeed * TRAFFIC_LAUNCH_SPEED_RATIO,
 				longitudinalLoad: 0,
 				steeringAngle: 0,
@@ -544,6 +598,7 @@ export function createTrafficSimulation(options: TrafficSimulationOptions): Traf
 			direction,
 			plannedDirection: undefined,
 			progress: 0.08 + random() * 0.74,
+			laneIndex,
 			laneOffset,
 			offsetFromX: offset.x,
 			offsetFromZ: offset.z,
@@ -1101,6 +1156,8 @@ export function createTrafficSimulation(options: TrafficSimulationOptions): Traf
 				? { ...vehicle.plannedDirection }
 				: undefined,
 			progress: vehicle.progress,
+			laneIndex: vehicle.laneIndex,
+			laneOffset: vehicle.laneOffset,
 			offsetFromX: vehicle.offsetFromX,
 			offsetFromZ: vehicle.offsetFromZ,
 			offsetToX: vehicle.offsetToX,
@@ -1116,6 +1173,10 @@ export function createTrafficSimulation(options: TrafficSimulationOptions): Traf
 		vehicle.direction = snapshot.direction;
 		vehicle.plannedDirection = snapshot.plannedDirection;
 		vehicle.progress = snapshot.progress;
+		vehicle.laneIndex = snapshot.laneIndex;
+		vehicle.laneOffset = snapshot.laneOffset;
+		vehicle.state.laneIndex = snapshot.laneIndex;
+		vehicle.state.laneOffset = snapshot.laneOffset;
 		vehicle.offsetFromX = snapshot.offsetFromX;
 		vehicle.offsetFromZ = snapshot.offsetFromZ;
 		vehicle.offsetToX = snapshot.offsetToX;
@@ -1533,6 +1594,17 @@ export function createTrafficSimulation(options: TrafficSimulationOptions): Traf
 					vehicle.progress -= 1;
 					vehicle.tileX = wrapIndex(vehicle.tileX + vehicle.direction.dx, layout.gridSize);
 					vehicle.tileZ = wrapIndex(vehicle.tileZ + vehicle.direction.dz, layout.gridSize);
+					const profile = roadProfileAt(layout, vehicle.tileX, vehicle.tileZ);
+					vehicle.laneIndex = Math.min(
+						vehicle.laneIndex,
+						lanesPerDirection(profile) - 1,
+					);
+					vehicle.state.laneIndex = vehicle.laneIndex;
+					const laneOffset = rightHandLaneOffset(
+						profile,
+						layout.tileSize,
+						vehicle.laneIndex,
+					);
 					const direction =
 						vehicle.plannedDirection ??
 						chooseDirection(
@@ -1540,7 +1612,7 @@ export function createTrafficSimulation(options: TrafficSimulationOptions): Traf
 							roadNeighbors(layout, roadTiles, vehicle.tileX, vehicle.tileZ),
 							vehicle.direction,
 						);
-					if (direction) aimVehicle(vehicle, direction);
+					if (direction) aimVehicle(vehicle, direction, laneOffset);
 					vehicle.plannedDirection = undefined;
 				}
 				updatePosition(layout, vehicle, false);

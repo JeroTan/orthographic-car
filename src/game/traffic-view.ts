@@ -471,8 +471,16 @@ export function addTrafficView(
 	collision?: CollisionQuery,
 	terrain?: TerrainQuery,
 	onModelReady?: () => void,
+	excludedSpawnTile?: { tileX: number; tileZ: number; radius: number },
 ): TrafficView {
-	const simulation = createTrafficSimulation({ layout, seed, maxVehicles, collision, terrain });
+	const simulation = createTrafficSimulation({
+		layout,
+		seed,
+		maxVehicles,
+		collision,
+		terrain,
+		excludedSpawnTile,
+	});
 	if (simulation.vehicles.length === 0) {
 		return {
 			step: () => undefined,

@@ -9,6 +9,7 @@ import { addVehicleView } from './vehicle-view';
 import { addTrafficView, type TrafficView } from './traffic-view';
 import { DEFAULT_TRAFFIC_VEHICLE_COUNT } from './traffic';
 import { DEFAULT_PORSCHE_COLOR, type PorscheColor } from './porsche-colors';
+import { choosePlayerRoadSpawn } from './road-network';
 import {
 	createCollisionIndex,
 	createTerrainIndex,
@@ -230,7 +231,11 @@ function addWorld(scene: THREE.Scene, layout: WorldLayout, onAssetReady: () => v
 		new THREE.MeshBasicMaterial({ color: 0xf0eee2 }),
 		repeatedDecorationTransforms(
 			layout,
-			[...decorations.edgeLines, ...decorations.crosswalkStripes],
+			[
+				...decorations.laneDashes,
+				...decorations.edgeLines,
+				...decorations.crosswalkStripes,
+			],
 			0.047,
 			0.02,
 		),
@@ -328,6 +333,10 @@ export function createGameScene(container: HTMLElement, options: GameSceneOption
 		collision: collisionIndex,
 		terrain: terrainIndex,
 	});
+	const playerSpawn = choosePlayerRoadSpawn(layout);
+	controller.state.x = playerSpawn.x;
+	controller.state.z = playerSpawn.z;
+	controller.state.heading = playerSpawn.heading;
 	const scene = new THREE.Scene();
 	scene.background = new THREE.Color(0xc8ddd1);
 	scene.fog = new THREE.Fog(0xc8ddd1, 72, 160);
@@ -366,6 +375,7 @@ export function createGameScene(container: HTMLElement, options: GameSceneOption
 		collisionIndex,
 		terrainIndex,
 		() => startLoop(),
+		{ tileX: playerSpawn.tileX, tileZ: playerSpawn.tileZ, radius: 2 },
 	);
 	let destroyed = false;
 	let lastTime = performance.now();

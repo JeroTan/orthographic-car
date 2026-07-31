@@ -118,6 +118,31 @@ describe('road surface', () => {
 		});
 	});
 
+	it('widens four-lane arterials and adds same-direction lane dividers', () => {
+		const layout = roadLayout(
+			Array.from({ length: 5 }, (_, x) => ({
+				x,
+				z: 2,
+				roadClass: 'arterial' as const,
+			})),
+			5,
+		);
+		const terrain = createTerrainIndex(layout);
+		const decorations = buildRoadDecorations(layout);
+
+		expect({
+			insideOuterLane: terrain.isRoadAt(0, 6),
+			outsideShoulder: terrain.isRoadAt(0, 7.3),
+			centerDashes: decorations.centerDashes.length,
+			laneDashes: decorations.laneDashes.length,
+		}).toEqual({
+			insideOuterLane: true,
+			outsideShoulder: false,
+			centerDashes: 10,
+			laneDashes: 20,
+		});
+	});
+
 	it('adds separated crosswalk stripes outside a four-way intersection', () => {
 		const layout = roadLayout(
 			[

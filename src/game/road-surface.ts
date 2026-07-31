@@ -1,4 +1,9 @@
 import type { RoadLayout } from './world';
+import {
+	roadLaneWidth,
+	roadProfileFor,
+	roadWidth,
+} from './road-network';
 
 export interface RoadSurfaceData {
 	positions: Float32Array;
@@ -28,6 +33,7 @@ export interface RoadDecorationRect {
 
 export interface RoadDecorationData {
 	centerDashes: RoadDecorationRect[];
+	laneDashes: RoadDecorationRect[];
 	edgeLines: RoadDecorationRect[];
 	pavements: RoadDecorationRect[];
 	crosswalkStripes: RoadDecorationRect[];
@@ -62,9 +68,48 @@ function roadTileSet(layout: RoadLayout): Set<number> {
 	return new Set(layout.roads.map((road) => roadTileKey(layout, road.x, road.z)));
 }
 
+function roadTileMap(layout: RoadLayout) {
+	return new Map(
+		layout.roads.map((road) => [roadTileKey(layout, road.x, road.z), road] as const),
+	);
+}
+
+function roadRectangle(
+	layout: RoadLayout,
+	roadTiles: ReadonlySet<number>,
+	road: RoadLayout['roads'][number],
+): { halfWidth: number; halfDepth: number } {
+	const hasRoad = (x: number, z: number) =>
+		roadTiles.has(
+			roadTileKey(
+				layout,
+				wrapGridIndex(x, layout.gridSize),
+				wrapGridIndex(z, layout.gridSize),
+			),
+		);
+	const horizontal = hasRoad(road.x - 1, road.z) || hasRoad(road.x + 1, road.z);
+	const vertical = hasRoad(road.x, road.z - 1) || hasRoad(road.x, road.z + 1);
+	const profile = roadProfileFor(road.roadClass);
+	const halfTile = layout.tileSize / 2;
+	const halfRoad = roadWidth(profile, layout.tileSize) / 2;
+
+	if (profile.roadClass === 'local') {
+		return { halfWidth: halfTile, halfDepth: halfTile };
+	}
+	if (horizontal && !vertical) {
+		return { halfWidth: halfTile, halfDepth: halfRoad };
+	}
+	if (vertical && !horizontal) {
+		return { halfWidth: halfRoad, halfDepth: halfTile };
+	}
+	return { halfWidth: halfRoad, halfDepth: halfRoad };
+}
+
 export function buildRoadDecorations(layout: RoadLayout): RoadDecorationData {
 	const roadTiles = roadTileSet(layout);
+	const roads = roadTileMap(layout);
 	const centerDashes: RoadDecorationRect[] = [];
+	const laneDashes: RoadDecorationRect[] = [];
 	const edgeLines: RoadDecorationRect[] = [];
 	const pavements: RoadDecorationRect[] = [];
 	const crosswalkStripes: RoadDecorationRect[] = [];
@@ -87,6 +132,17 @@ export function buildRoadDecorations(layout: RoadLayout): RoadDecorationData {
 		);
 	}
 
+	function connectedRoadRectangle(x: number, z: number) {
+		const road = roads.get(
+			roadTileKey(
+				layout,
+				wrapGridIndex(x, layout.gridSize),
+				wrapGridIndex(z, layout.gridSize),
+			),
+		);
+		return road ? roadRectangle(layout, roadTiles, road) : undefined;
+	}
+
 	function addStraightCenterDashes(
 		centerX: number,
 		centerZ: number,
@@ -103,6 +159,9 @@ export function buildRoadDecorations(layout: RoadLayout): RoadDecorationData {
 	}
 
 	for (const road of layout.roads) {
+		const profile = roadProfileFor(road.roadClass);
+		const profileRoadWidth = roadWidth(profile, layout.tileSize);
+		const profileHalfRoad = profileRoadWidth / 2;
 		const centerX = origin + (road.x + 0.5) * layout.tileSize;
 		const centerZ = origin + (road.z + 0.5) * layout.tileSize;
 		const west = hasRoad(road.x - 1, road.z);
@@ -118,9 +177,35 @@ export function buildRoadDecorations(layout: RoadLayout): RoadDecorationData {
 
 		if (west && east && !north && !south) {
 			addStraightCenterDashes(centerX, centerZ, 'horizontal');
+			if (profile.laneCount > 2) {
+				const laneWidth = roadLaneWidth(profile, layout.tileSize);
+				for (const laneSide of [-1, 1]) {
+					for (const offset of [-layout.tileSize * 0.22, layout.tileSize * 0.22]) {
+						laneDashes.push({
+							x: centerX + offset,
+							z: centerZ + laneSide * laneWidth,
+							width: layout.tileSize * 0.28,
+							depth: lineThickness,
+						});
+					}
+				}
+			}
 		}
 		if (north && south && !west && !east) {
 			addStraightCenterDashes(centerX, centerZ, 'vertical');
+			if (profile.laneCount > 2) {
+				const laneWidth = roadLaneWidth(profile, layout.tileSize);
+				for (const laneSide of [-1, 1]) {
+					for (const offset of [-layout.tileSize * 0.22, layout.tileSize * 0.22]) {
+						laneDashes.push({
+							x: centerX + laneSide * laneWidth,
+							z: centerZ + offset,
+							width: lineThickness,
+							depth: layout.tileSize * 0.28,
+						});
+					}
+				}
+			}
 		}
 		const horizontalDirection = west !== east ? (west ? -1 : 1) : 0;
 		const verticalDirection = north !== south ? (north ? -1 : 1) : 0;
@@ -142,12 +227,14 @@ export function buildRoadDecorations(layout: RoadLayout): RoadDecorationData {
 			}
 		}
 		if (connectedDirections.filter((direction) => direction.connected).length >= 3) {
+			const crosswalkStripeCount =
+				profile.laneCount > 2 ? CROSSWALK_STRIPE_COUNT + 4 : CROSSWALK_STRIPE_COUNT;
 			for (const direction of connectedDirections) {
 				if (!direction.connected) continue;
-				for (let stripe = 0; stripe < CROSSWALK_STRIPE_COUNT; stripe += 1) {
-					const approachDistance = halfTile + crosswalkApproachOffset;
+				for (let stripe = 0; stripe < crosswalkStripeCount; stripe += 1) {
+					const approachDistance = profileHalfRoad + crosswalkApproachOffset;
 					const crossLaneOffset =
-						(stripe - (CROSSWALK_STRIPE_COUNT - 1) / 2) * crosswalkStripeSpacing;
+						(stripe - (crosswalkStripeCount - 1) / 2) * crosswalkStripeSpacing;
 					crosswalkStripes.push({
 						x: centerX + direction.x * approachDistance - direction.z * crossLaneOffset,
 						z: centerZ + direction.z * approachDistance + direction.x * crossLaneOffset,
@@ -160,19 +247,85 @@ export function buildRoadDecorations(layout: RoadLayout): RoadDecorationData {
 			}
 		}
 
+		const horizontal = west || east;
+		const vertical = north || south;
+		const boundaryHalfX = vertical && profile.laneCount > 2 ? profileHalfRoad : halfTile;
+		const boundaryHalfZ = horizontal && profile.laneCount > 2 ? profileHalfRoad : halfTile;
+		const verticalEdgeDepth = horizontal && profile.laneCount > 2
+			? profileRoadWidth
+			: layout.tileSize;
+		const horizontalEdgeWidth = vertical && profile.laneCount > 2
+			? profileRoadWidth
+			: layout.tileSize;
+		const westTrim = west
+			? Math.max(
+					0,
+					(connectedRoadRectangle(road.x - 1, road.z)?.halfWidth ?? halfTile) -
+						halfTile,
+				)
+			: 0;
+		const eastTrim = east
+			? Math.max(
+					0,
+					(connectedRoadRectangle(road.x + 1, road.z)?.halfWidth ?? halfTile) -
+						halfTile,
+				)
+			: 0;
+		const northTrim = north
+			? Math.max(
+					0,
+					(connectedRoadRectangle(road.x, road.z - 1)?.halfDepth ?? halfTile) -
+						halfTile,
+				)
+			: 0;
+		const southTrim = south
+			? Math.max(
+					0,
+					(connectedRoadRectangle(road.x, road.z + 1)?.halfDepth ?? halfTile) -
+						halfTile,
+				)
+			: 0;
+		const horizontalEdgeCenterX = centerX + (westTrim - eastTrim) / 2;
+		const horizontalEdgeLength = Math.max(0, layout.tileSize - westTrim - eastTrim);
+		const verticalEdgeCenterZ = centerZ + (northTrim - southTrim) / 2;
+		const verticalEdgeLength = Math.max(0, layout.tileSize - northTrim - southTrim);
 		for (const edge of [
-			{ open: !west, x: centerX - halfTile, z: centerZ, width: lineThickness, depth: layout.tileSize },
-			{ open: !east, x: centerX + halfTile, z: centerZ, width: lineThickness, depth: layout.tileSize },
-			{ open: !north, x: centerX, z: centerZ - halfTile, width: layout.tileSize, depth: lineThickness },
-			{ open: !south, x: centerX, z: centerZ + halfTile, width: layout.tileSize, depth: lineThickness },
+			{
+				open: !west,
+				x: centerX - boundaryHalfX,
+				z: verticalEdgeCenterZ,
+				width: lineThickness,
+				depth: Math.min(verticalEdgeDepth, verticalEdgeLength),
+			},
+			{
+				open: !east,
+				x: centerX + boundaryHalfX,
+				z: verticalEdgeCenterZ,
+				width: lineThickness,
+				depth: Math.min(verticalEdgeDepth, verticalEdgeLength),
+			},
+			{
+				open: !north,
+				x: horizontalEdgeCenterX,
+				z: centerZ - boundaryHalfZ,
+				width: Math.min(horizontalEdgeWidth, horizontalEdgeLength),
+				depth: lineThickness,
+			},
+			{
+				open: !south,
+				x: horizontalEdgeCenterX,
+				z: centerZ + boundaryHalfZ,
+				width: Math.min(horizontalEdgeWidth, horizontalEdgeLength),
+				depth: lineThickness,
+			},
 		]) {
-			if (!edge.open) continue;
+			if (!edge.open || edge.width <= 0 || edge.depth <= 0) continue;
 			edgeLines.push({ x: edge.x, z: edge.z, width: edge.width, depth: edge.depth });
 			pavements.push({
 				x: edge.x + Math.sign(edge.x - centerX) * pavementDepth / 2,
 				z: edge.z + Math.sign(edge.z - centerZ) * pavementDepth / 2,
-				width: edge.width === lineThickness ? pavementDepth : layout.tileSize,
-				depth: edge.depth === lineThickness ? pavementDepth : layout.tileSize,
+				width: edge.width === lineThickness ? pavementDepth : edge.width,
+				depth: edge.depth === lineThickness ? pavementDepth : edge.depth,
 			});
 		}
 	}
@@ -245,11 +398,12 @@ export function buildRoadDecorations(layout: RoadLayout): RoadDecorationData {
 		}
 	}
 
-	return { centerDashes, edgeLines, pavements, crosswalkStripes };
+	return { centerDashes, laneDashes, edgeLines, pavements, crosswalkStripes };
 }
 
 export function getRoadCornerJoins(layout: RoadLayout): RoadCornerJoin[] {
 	const roadTiles = roadTileSet(layout);
+	const roads = roadTileMap(layout);
 	const joins: RoadCornerJoin[] = [];
 	const origin = -layout.worldSpan / 2;
 	const depth = layout.tileSize * 0.18;
@@ -281,6 +435,14 @@ export function getRoadCornerJoins(layout: RoadLayout): RoadCornerJoin[] {
 				(quadrant) => !roadTiles.has(roadTileKey(layout, quadrant.tileX, quadrant.tileZ)),
 			);
 			if (emptyQuadrants.length !== 1) continue;
+			if (
+				quadrants.some((quadrant) => {
+					const road = roads.get(roadTileKey(layout, quadrant.tileX, quadrant.tileZ));
+					return road && roadProfileFor(road.roadClass).laneCount > 2;
+				})
+			) {
+				continue;
+			}
 
 			const empty = emptyQuadrants[0];
 			joins.push({
@@ -298,6 +460,8 @@ export function getRoadCornerJoins(layout: RoadLayout): RoadCornerJoin[] {
 
 export function createRoadSurfaceQuery(layout: RoadLayout): RoadSurfaceQuery {
 	const roadTiles = roadTileSet(layout);
+	const roads = roadTileMap(layout);
+	const origin = -layout.worldSpan / 2;
 	const joins = getRoadCornerJoins(layout);
 	const joinBuckets = new Map<number, RoadCornerJoin[]>();
 	for (const join of joins) {
@@ -330,6 +494,20 @@ export function createRoadSurfaceQuery(layout: RoadLayout): RoadSurfaceQuery {
 						wrapGridIndex(tileX + offsetX, layout.gridSize),
 						wrapGridIndex(tileZ + offsetZ, layout.gridSize),
 					);
+					const road = roads.get(key);
+					if (road && roadProfileFor(road.roadClass).laneCount > 2) {
+						const rectangle = roadRectangle(layout, roadTiles, road);
+						const centerX = origin + (road.x + 0.5) * layout.tileSize;
+						const centerZ = origin + (road.z + 0.5) * layout.tileSize;
+						if (
+							Math.abs(wrappedDelta(wrappedX, centerX, layout.worldSpan)) <=
+								rectangle.halfWidth &&
+							Math.abs(wrappedDelta(wrappedZ, centerZ, layout.worldSpan)) <=
+								rectangle.halfDepth
+						) {
+							return true;
+						}
+					}
 					for (const join of joinBuckets.get(key) ?? []) {
 						const distanceX = wrappedDelta(wrappedX, join.x, layout.worldSpan) * join.directionX;
 						const distanceZ = wrappedDelta(wrappedZ, join.z, layout.worldSpan) * join.directionZ;
@@ -353,6 +531,7 @@ export function buildRoadSurface(layout: RoadLayout): RoadSurfaceData {
 	const uvs: number[] = [];
 	const indices: number[] = [];
 	const vertices = new Map<string, number>();
+	const roadTiles = roadTileSet(layout);
 	const origin = -layout.worldSpan / 2;
 	const textureScale = layout.tileSize * 2;
 
@@ -381,17 +560,24 @@ export function buildRoadSurface(layout: RoadLayout): RoadSurfaceData {
 		indices.push(first, ...(normalY >= 0 ? [second, third] : [third, second]));
 	}
 
-	for (const road of layout.roads) {
-		const x0 = origin + road.x * layout.tileSize;
-		const x1 = x0 + layout.tileSize;
-		const z0 = origin + road.z * layout.tileSize;
-		const z1 = z0 + layout.tileSize;
+	function rectangle(x0: number, x1: number, z0: number, z1: number): void {
 		const bottomLeft = vertex(x0, z0);
 		const topLeft = vertex(x0, z1);
 		const topRight = vertex(x1, z1);
 		const bottomRight = vertex(x1, z0);
-
 		indices.push(bottomLeft, topLeft, topRight, bottomLeft, topRight, bottomRight);
+	}
+
+	for (const road of layout.roads) {
+		const centerX = origin + (road.x + 0.5) * layout.tileSize;
+		const centerZ = origin + (road.z + 0.5) * layout.tileSize;
+		const bounds = roadRectangle(layout, roadTiles, road);
+		rectangle(
+			centerX - bounds.halfWidth,
+			centerX + bounds.halfWidth,
+			centerZ - bounds.halfDepth,
+			centerZ + bounds.halfDepth,
+		);
 	}
 
 	for (const join of getRoadCornerJoins(layout)) {

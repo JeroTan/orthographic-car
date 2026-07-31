@@ -102,6 +102,32 @@ describe('procedural world', () => {
 		expect(world.props.length).toBeGreaterThan(200);
 	});
 
+	it('connects local two-lane streets to four-lane arterials', () => {
+		const world = generateWorld(6767);
+		const roadByKey = new Map(
+			world.roads.map((road) => [tileKey(world, road.x, road.z), road] as const),
+		);
+		const classes = new Set(world.roads.map((road) => road.roadClass));
+		const transitions = world.roads.filter((road) =>
+			[
+				[road.x - 1, road.z],
+				[road.x + 1, road.z],
+				[road.x, road.z - 1],
+				[road.x, road.z + 1],
+			].some(
+				([x, z]) =>
+					roadByKey.get(tileKey(world, x, z))?.roadClass !== undefined &&
+					roadByKey.get(tileKey(world, x, z))?.roadClass !== road.roadClass,
+			),
+		);
+
+		expect(classes).toEqual(new Set(['local', 'arterial']));
+		expect(transitions.length).toBeGreaterThan(0);
+		expect(world.roads.filter((road) => road.roadClass === 'arterial').length).toBeGreaterThan(
+			world.gridSize * 4,
+		);
+	});
+
 	it('fills meadow with deterministic grass while keeping asphalt clear', () => {
 		const world = generateWorld(1337);
 		const terrainIndex = createTerrainIndex(world);

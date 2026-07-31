@@ -175,11 +175,13 @@ describe('ambient traffic simulation', () => {
 			worldSpan: 384,
 			roads: Array.from({ length: 64 }, (_, x) => ({ x, z: 32 })),
 		};
-		const traffic = createTrafficSimulation({ layout, seed: 77, maxVehicles: 2 });
+		// Distributed spawning intentionally keeps a tiny population far apart.
+		// Fill corridor enough to exercise body-aware following behavior.
+		const traffic = createTrafficSimulation({ layout, seed: 77, maxVehicles: 8 });
 		let maximumImpact = 0;
 		let maximumBrake = 0;
 
-		for (let frame = 0; frame < 60; frame += 1) {
+		for (let frame = 0; frame < 240; frame += 1) {
 			traffic.step(0.05);
 			const frameImpact = Math.max(
 				...traffic.vehicles.map((vehicle) => vehicle.impactIntensity),
@@ -447,6 +449,30 @@ describe('ambient traffic simulation', () => {
 			createTrafficSimulation({ layout: world, seed: 6767, maxVehicles: MAX_TRAFFIC_VEHICLES + 10 })
 				.vehicles.length,
 		).toBe(MAX_TRAFFIC_VEHICLES);
+	});
+
+	it('spreads initial traffic through map regions instead of clustering near player', () => {
+		const world = generateWorld(6767);
+		const traffic = createTrafficSimulation({
+			layout: world,
+			seed: 6767,
+			maxVehicles: DEFAULT_TRAFFIC_VEHICLE_COUNT,
+		});
+		const regionKeys = new Set(
+			traffic.vehicles.map((vehicle) => {
+				const normalizedX =
+					(((vehicle.x + world.worldSpan / 2) % world.worldSpan) + world.worldSpan) %
+					world.worldSpan;
+				const normalizedZ =
+					(((vehicle.z + world.worldSpan / 2) % world.worldSpan) + world.worldSpan) %
+					world.worldSpan;
+				const regionX = Math.min(3, Math.floor((normalizedX / world.worldSpan) * 4));
+				const regionZ = Math.min(3, Math.floor((normalizedZ / world.worldSpan) * 4));
+				return regionX + regionZ * 4;
+			}),
+		);
+
+		expect(regionKeys.size).toBeGreaterThanOrEqual(8);
 	});
 
 	it('keeps traffic in right-hand lanes for every heading', () => {

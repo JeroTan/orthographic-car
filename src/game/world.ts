@@ -1,4 +1,5 @@
-import { createRoadSurfaceQuery } from './road-surface';
+import { createRoadSurfaceQuery, type RoadSurfaceQuery } from './road-surface';
+import type { RoadClass } from './road-network';
 
 export const WORLD_GRID_SIZE = 64;
 export const WORLD_TILE_SIZE = 8;
@@ -10,6 +11,11 @@ export const WORLD_BUILDING_MAX_COUNT = 96;
 export interface TileCoordinate {
 	x: number;
 	z: number;
+}
+
+export interface RoadTile extends TileCoordinate {
+	/** Missing means legacy two-lane local road. */
+	roadClass?: RoadClass;
 }
 
 export type PropKind = 'tree' | 'rock' | 'flowers' | 'cottage';
@@ -41,7 +47,7 @@ export interface RoadLayout {
 	gridSize: number;
 	tileSize: number;
 	worldSpan: number;
-	roads: TileCoordinate[];
+	roads: RoadTile[];
 }
 
 export interface WorldLayout extends RoadLayout {
@@ -205,6 +211,7 @@ function shuffledRange(random: () => number, minimum: number, maximum: number): 
 
 function tryAddHorizontalArterial(
 	roadTiles: Set<number>,
+	arterialTiles: Set<number>,
 	random: () => number,
 	minimum: number,
 	maximum: number,
@@ -214,13 +221,19 @@ function tryAddHorizontalArterial(
 			{ length: WORLD_GRID_SIZE },
 			(_, x) => [x, z] as const,
 		);
-		if (tryAddRoadSegment(roadTiles, coordinates)) return true;
+		if (tryAddRoadSegment(roadTiles, coordinates)) {
+			for (const [x, tileZ] of coordinates) {
+				arterialTiles.add(tileId(wrapTile(x), wrapTile(tileZ)));
+			}
+			return true;
+		}
 	}
 	return false;
 }
 
 function tryAddVerticalArterial(
 	roadTiles: Set<number>,
+	arterialTiles: Set<number>,
 	random: () => number,
 	minimum: number,
 	maximum: number,
@@ -230,12 +243,21 @@ function tryAddVerticalArterial(
 			{ length: WORLD_GRID_SIZE },
 			(_, z) => [x, z] as const,
 		);
-		if (tryAddRoadSegment(roadTiles, coordinates)) return true;
+		if (tryAddRoadSegment(roadTiles, coordinates)) {
+			for (const [tileX, z] of coordinates) {
+				arterialTiles.add(tileId(wrapTile(tileX), wrapTile(z)));
+			}
+			return true;
+		}
 	}
 	return false;
 }
 
-function addSecondaryArterials(roadTiles: Set<number>, random: () => number): void {
+function addSecondaryArterials(
+	roadTiles: Set<number>,
+	arterialTiles: Set<number>,
+	random: () => number,
+): void {
 	const boundaryMinimum = Math.max(1, Math.floor(WORLD_GRID_SIZE * 0.18));
 	const boundaryMaximum = Math.max(boundaryMinimum, Math.floor(WORLD_GRID_SIZE * 0.3));
 	const oppositeMinimum = WORLD_GRID_SIZE - 1 - boundaryMaximum;
@@ -243,10 +265,10 @@ function addSecondaryArterials(roadTiles: Set<number>, random: () => number): vo
 
 	// Retry alternate bands when seeded collector segments would create a 2×2
 	// asphalt block. Keep each side balanced so every plan gets readable blocks.
-	tryAddHorizontalArterial(roadTiles, random, boundaryMinimum, boundaryMaximum);
-	tryAddHorizontalArterial(roadTiles, random, oppositeMinimum, oppositeMaximum);
-	tryAddVerticalArterial(roadTiles, random, boundaryMinimum, boundaryMaximum);
-	tryAddVerticalArterial(roadTiles, random, oppositeMinimum, oppositeMaximum);
+	tryAddHorizontalArterial(roadTiles, arterialTiles, random, boundaryMinimum, boundaryMaximum);
+	tryAddHorizontalArterial(roadTiles, arterialTiles, random, oppositeMinimum, oppositeMaximum);
+	tryAddVerticalArterial(roadTiles, arterialTiles, random, boundaryMinimum, boundaryMaximum);
+	tryAddVerticalArterial(roadTiles, arterialTiles, random, oppositeMinimum, oppositeMaximum);
 }
 
 function addCornerBlock(roadTiles: Set<number>, outerX: number, outerZ: number): void {
@@ -325,7 +347,11 @@ function createBuildingProximityIndex(): BuildingProximityIndex {
 	};
 }
 
-function generateBuildings(roadTiles: ReadonlySet<number>, seed: number): BuildingPlacement[] {
+function generateBuildings(
+	roadTiles: ReadonlySet<number>,
+	roadSurface: RoadSurfaceQuery,
+	seed: number,
+): BuildingPlacement[] {
 	const random = createRandom(seed ^ 0x51ed270b);
 	const spacing = [6.5, 7, 7.5][Math.floor(random() * 3)];
 	const variantOffset = Math.floor(random() * 6);
@@ -347,14 +373,27 @@ function generateBuildings(roadTiles: ReadonlySet<number>, seed: number): Buildi
 			);
 			if (!roadDirection) continue;
 
-			candidates.push({
+			const candidate: BuildingPlacement & { roll: number } = {
 				variant: 0,
 				x: tileToWorld(x) - roadDirection.x * 0.55,
 				z: tileToWorld(z) - roadDirection.z * 0.55,
 				rotation: roadDirection.x !== 0 ? 0 : Math.PI / 2,
 				scale: 0.9 + random() * 0.18,
 				roll: random(),
-			});
+			};
+			const clearance = 3.5 * candidate.scale;
+			const overlapsRoad = Array.from(
+				{ length: 8 },
+				(_, index) => (index * Math.PI) / 4,
+			).some((angle) =>
+				roadSurface.containsPoint(
+					candidate.x + Math.cos(angle) * clearance,
+					candidate.z + Math.sin(angle) * clearance,
+				),
+			);
+			if (!roadSurface.containsPoint(candidate.x, candidate.z) && !overlapsRoad) {
+				candidates.push(candidate);
+			}
 		}
 	}
 
@@ -392,33 +431,42 @@ export function generateWorld(seed: number): WorldLayout {
 	const random = createRandom(seed);
 	const roadRandom = createRandom(seed ^ 0x9e3779b9);
 	const roadTiles = new Set<number>();
+	const arterialTiles = new Set<number>();
 	const anchor = WORLD_GRID_SIZE / 2;
 
 	// Every family starts from straight seam-wrapping arterials. Seeded grammar
 	// adds only whole orthogonal segments, preventing noisy staircase roads.
 	addHorizontalRoad(roadTiles, anchor, 0, WORLD_GRID_SIZE - 1);
 	addVerticalRoad(roadTiles, anchor, 0, WORLD_GRID_SIZE - 1);
+	for (let index = 0; index < WORLD_GRID_SIZE; index += 1) {
+		arterialTiles.add(tileId(index, anchor));
+		arterialTiles.add(tileId(anchor, index));
+	}
 
 	const roadFamily = Math.floor(roadRandom() * 3);
 	if (roadFamily === 0) addCollectorLoop(roadTiles, roadRandom);
 	else if (roadFamily === 1) addParallelGrid(roadTiles, roadRandom);
 	else addStaggeredBlocks(roadTiles, roadRandom);
-	addSecondaryArterials(roadTiles, roadRandom);
+	addSecondaryArterials(roadTiles, arterialTiles, roadRandom);
 
 	const roads = [...roadTiles].map((id) => {
-		return { x: id % WORLD_GRID_SIZE, z: Math.floor(id / WORLD_GRID_SIZE) };
+		return {
+			x: id % WORLD_GRID_SIZE,
+			z: Math.floor(id / WORLD_GRID_SIZE),
+			roadClass: arterialTiles.has(id) ? 'arterial' : 'local',
+		} satisfies RoadTile;
 	});
-	const buildings = generateBuildings(roadTiles, seed);
-	const grassRandom = createRandom(seed ^ 0x7f4a7c15);
-	const grass: GrassPlacement[] = [];
-	const buildingProximity = createBuildingProximityIndex();
-	for (const building of buildings) buildingProximity.add(building);
 	const roadSurface = createRoadSurfaceQuery({
 		gridSize: WORLD_GRID_SIZE,
 		tileSize: WORLD_TILE_SIZE,
 		worldSpan: WORLD_SPAN,
 		roads,
 	});
+	const buildings = generateBuildings(roadTiles, roadSurface, seed);
+	const grassRandom = createRandom(seed ^ 0x7f4a7c15);
+	const grass: GrassPlacement[] = [];
+	const buildingProximity = createBuildingProximityIndex();
+	for (const building of buildings) buildingProximity.add(building);
 	for (let z = 0; z < WORLD_GRID_SIZE; z += 1) {
 		for (let x = 0; x < WORLD_GRID_SIZE; x += 1) {
 			if (roadTiles.has(tileId(x, z))) continue;
@@ -473,6 +521,19 @@ export function generateWorld(seed: number): WorldLayout {
 			const jitter = kind === 'cottage' ? 0.08 : 0.26;
 			const propX = tileToWorld(x) + (random() - 0.5) * WORLD_TILE_SIZE * jitter;
 			const propZ = tileToWorld(z) + (random() - 0.5) * WORLD_TILE_SIZE * jitter;
+			const propRadius =
+				kind === 'cottage' ? 2.2 : kind === 'tree' ? 1.25 : kind === 'rock' ? 0.9 : 0.25;
+			if (
+				roadSurface.containsPoint(propX, propZ) ||
+				Array.from({ length: 4 }, (_, index) => (index * Math.PI) / 2).some((angle) =>
+					roadSurface.containsPoint(
+						propX + Math.cos(angle) * propRadius,
+						propZ + Math.sin(angle) * propRadius,
+					),
+				)
+			) {
+				continue;
+			}
 			if (buildingProximity.isNear({ x: propX, z: propZ }, kind === 'cottage' ? 6 : 4.5)) {
 				continue;
 			}
