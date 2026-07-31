@@ -8,6 +8,11 @@ import {
 } from './traffic';
 import { loadTrafficModels, type PackedTrafficModel } from './traffic-model';
 import {
+	loadTrafficTextures,
+	trafficTextureKeyFor,
+	type TrafficTextureKey,
+} from './traffic-textures';
+import {
 	getTrafficVehicleModel,
 	type TrafficVehicleModel,
 } from './traffic-vehicle-catalog';
@@ -21,12 +26,12 @@ const TRAFFIC_WHEEL_SPIN_FACTOR = 0.8;
 const TRAFFIC_TRAIL_POOL_SIZE = 120;
 const TRAFFIC_SMOKE_POOL_SIZE = 56;
 
-interface WheelAxle {
+export interface WheelAxle {
 	pivots: THREE.Group[];
 	wheels: THREE.Mesh[];
 }
 
-interface TrafficVisual {
+export interface TrafficVisual {
 	group: THREE.Group;
 	motion: THREE.Group;
 	chassis: THREE.Group;
@@ -153,9 +158,9 @@ function addWheel(
 	pivot.position.set(x, worldUnits(model.wheelRadiusMeters), z);
 	const wheel = new THREE.Mesh(assets.unitWheel, assets.tire);
 	wheel.scale.set(
-		worldUnits(model.widthMeters * 0.12) / 0.7,
-		worldUnits(model.wheelRadiusMeters),
-		worldUnits(model.wheelRadiusMeters),
+		worldUnits(model.widthMeters * 0.17) / 0.7,
+		worldUnits(model.wheelRadiusMeters * 1.08),
+		worldUnits(model.wheelRadiusMeters * 1.08),
 	);
 	pivot.add(wheel);
 	motion.add(pivot);
@@ -170,7 +175,7 @@ function addFunctionalWheels(
 ): { frontAxle: WheelAxle; rearAxle: WheelAxle } {
 	const frontAxle: WheelAxle = { pivots: [], wheels: [] };
 	const rearAxle: WheelAxle = { pivots: [], wheels: [] };
-	const halfTrack = worldUnits(model.widthMeters * 0.39);
+	const halfTrack = worldUnits(model.widthMeters * 0.47);
 	const frontZ = worldUnits(model.wheelbaseMeters / 2);
 	const rearZ = -frontZ;
 
@@ -214,7 +219,7 @@ function addTrafficVehicle(
 	return { group, motion, chassis, fallback, modelAnchor, frontAxle, rearAxle, model };
 }
 
-function attachPackedModel(
+export function attachPackedModel(
 	visual: TrafficVisual,
 	packed: PackedTrafficModel,
 	material: THREE.Material,
@@ -224,6 +229,27 @@ function attachPackedModel(
 	mesh.scale.copy(packed.halfExtentMeters).multiplyScalar(worldUnits(1));
 	visual.modelAnchor.add(mesh);
 	visual.fallback.visible = false;
+	for (const pivot of [...visual.frontAxle.pivots, ...visual.rearAxle.pivots]) {
+		pivot.visible = false;
+	}
+}
+
+function applyTrafficTextures(
+	materials: ReadonlyMap<string, THREE.MeshLambertMaterial>,
+	textures: ReadonlyMap<TrafficTextureKey, THREE.Texture>,
+): void {
+	for (const [modelId, material] of materials) {
+		const model = getTrafficVehicleModel(modelId);
+		const textureKey = trafficTextureKeyFor(model);
+		if (!textureKey) continue;
+		const texture = textures.get(textureKey);
+		if (!texture) continue;
+		material.map = texture;
+		// Keep catalog paint differences while texture supplies surface detail.
+		// White would make every model in one texture family look identical.
+		material.color.set(model.bodyColor);
+		material.needsUpdate = true;
+	}
 }
 
 function wrappedDelta(value: number, span: number): number {
@@ -296,7 +322,7 @@ function addTrafficTireEffects(scene: THREE.Scene): TrafficTireEffects {
 	}
 
 	function rearWheelPosition(source: TireEffectSource, side: number): { x: number; z: number } {
-		const localX = source.model.wheelCount === 2 ? 0 : side * worldUnits(source.model.widthMeters * 0.39);
+		const localX = source.model.wheelCount === 2 ? 0 : side * worldUnits(source.model.widthMeters * 0.47);
 		const localZ = -worldUnits(source.model.wheelbaseMeters / 2);
 		return {
 			x: source.x + Math.cos(source.state.heading) * localX + Math.sin(source.state.heading) * localZ,
@@ -460,6 +486,14 @@ export function addTrafficView(
 	const tireEffects = addTrafficTireEffects(scene);
 	let destroyed = false;
 	let visualDeltaSeconds = 0;
+	void loadTrafficTextures()
+		.then((textures) => {
+			if (destroyed) return;
+			applyTrafficTextures(assets.bodyMaterials, textures);
+		})
+		.catch((error: unknown) => {
+			console.warn('Traffic textures could not load; using source colors.', error);
+		});
 
 	void loadTrafficModels()
 		.then((models) => {

@@ -12,12 +12,20 @@ import {
 	type VehicleCrashState,
 } from './vehicle-crash';
 import {
-	chooseTrafficVehicleModel,
+	getTrafficVehicleModel,
+	TRAFFIC_MODEL_IDS,
+	TRAFFIC_VEHICLE_MODELS,
 	TRAFFIC_VEHICLE_KINDS,
+	trafficModelsForKind,
 	type TrafficVehicleKind,
 	type TrafficVehicleModel,
 } from './traffic-vehicle-catalog';
 import { toWorldSpeed, WORLD_METERS_PER_UNIT, type CollisionQuery, type TerrainQuery } from './vehicle';
+import {
+	stepVehicleMotion,
+	type VehicleMotionInstruction,
+	type VehicleMotionProfile,
+} from './vehicle-motion';
 import type { RoadLayout } from './world';
 
 export const DEFAULT_TRAFFIC_VEHICLE_COUNT = 20;
@@ -33,6 +41,8 @@ export interface TrafficVehicleState extends VehicleCrashState {
 	x: number;
 	z: number;
 	heading: number;
+	/** Positive means vehicle's right-hand lane relative to heading. */
+	laneOffset: number;
 	speed: number;
 	longitudinalLoad: number;
 	steeringAngle: number;
@@ -80,6 +90,7 @@ interface SimulatedVehicle {
 	tileX: number;
 	tileZ: number;
 	direction: Direction;
+	plannedDirection?: Direction;
 	progress: number;
 	laneOffset: number;
 	offsetFromX: number;
@@ -111,6 +122,7 @@ interface TrafficRouteSnapshot {
 	tileX: number;
 	tileZ: number;
 	direction: Direction;
+	plannedDirection?: Direction;
 	progress: number;
 	offsetFromX: number;
 	offsetFromZ: number;
@@ -130,7 +142,6 @@ const DIRECTIONS: readonly Direction[] = [
 const TRAFFIC_LAUNCH_SPEED_RATIO = 0.34;
 const TRAFFIC_IMPACT_GRAVITY = 22;
 const TRAFFIC_IMPACT_DAMPING = 2.2;
-const TRAFFIC_ROUTE_RETURN_STIFFNESS = 0.8;
 const TRAFFIC_IMPACT_INTENSITY_DECAY = 1.8;
 const TRAFFIC_GROUND_RESTITUTION = 0.26;
 const TRAFFIC_GROUND_STOP_SPEED = 0.35;
@@ -140,36 +151,30 @@ const MAX_TRAFFIC_VERTICAL_SPEED = 10;
 const TRAFFIC_DAMAGE_PER_IMPULSE = 0.025;
 const TRAFFIC_AVOIDANCE_LOOKAHEAD = 3.5;
 const TRAFFIC_AVOIDANCE_TIME_HEADWAY = 1.5;
-const TRAFFIC_AVOIDANCE_GAP = 0.35;
+const TRAFFIC_AVOIDANCE_GAP = 0.85;
+const TRAFFIC_DRIVER_REACTION_SECONDS = 0.35;
 const TRAFFIC_AVOIDANCE_CORRIDOR = 0.7;
 const TRAFFIC_AVOIDANCE_RESPONSE = 5;
-const TRAFFIC_INTERSECTION_APPROACH_PROGRESS = 0.62;
-const TRAFFIC_INTERSECTION_STOP_PROGRESS = 0.82;
-const TRAFFIC_INTERSECTION_EXIT_PROGRESS = 0.68;
+const TRAFFIC_INTERSECTION_STOP_GAP = 0.45;
+const TRAFFIC_INTERSECTION_MIN_CONTROL_TILES = 2;
+const TRAFFIC_OPPOSING_LANE_CLEARANCE = 0.1;
 const TRAFFIC_AIRBORNE_CLOSING_SPEED = 5;
 const TRAFFIC_AIRBORNE_LAUNCH_FACTOR = 0.22;
 const PLAYER_AIRBORNE_LAUNCH_FACTOR = 0.14;
 const TRAFFIC_AIR_IMPACT_DAMPING = 0.28;
-const TRAFFIC_AIR_ROUTE_RETURN_STIFFNESS = 0.08;
 const TRAFFIC_CONTACT_SOLVER_PASSES = 3;
 const TRAFFIC_BROAD_PHASE_CELL_SIZE = 16;
 const MINIMUM_IMPACT_CLOSING_SPEED = 0.25;
+const TRAFFIC_RESTING_CONTACT_SPEED = 2;
+const TRAFFIC_RESTING_LATERAL_OFFSET = 0.22;
 const TRAFFIC_STATIC_RESTITUTION = 0.28;
 const TRAFFIC_STATIC_ESCAPE_STEP = 0.5;
 const TRAFFIC_STATIC_ESCAPE_MAX_DISTANCE = 12;
 const TRAFFIC_STATIC_ESCAPE_DIRECTIONS = 12;
-const TRAFFIC_KIND_SPAWN_WEIGHTS: Readonly<Record<TrafficVehicleKind, number>> = {
-	motorcycle: 6,
-	compact: 11,
-	civic: 8,
-	suv: 6,
-	pickup: 3,
-	van: 4,
-	truck: 2,
-	bus: 1,
-	supercar: 1,
-};
-
+const TRAFFIC_TURN_PLAN_PROGRESS = 0.18;
+const TRAFFIC_TURN_SPEED_FACTOR = 0.82;
+const TRAFFIC_PATH_CORRECTION_LIMIT = 0.42;
+const TRAFFIC_PATH_CORRECTION_RESPONSE = 1.25;
 interface TrafficPhysicsSpec {
 	acceleration: number;
 	braking: number;
@@ -178,6 +183,23 @@ interface TrafficPhysicsSpec {
 	mass: number;
 	maxSpeed: number;
 }
+
+interface IntersectionApproach {
+	id: number;
+	distanceToEntry: number;
+}
+
+interface IntersectionControl {
+	targetSpeed: number;
+	maximumTravelDistance: number;
+}
+
+type TrafficObstacle = VehicleImpactBody & {
+	id?: number;
+	collisionHalfLength?: number;
+	directionX?: number;
+	directionZ?: number;
+};
 
 function trafficPhysicsFor(model: TrafficVehicleModel): TrafficPhysicsSpec {
 	const widthWorld = model.widthMeters / WORLD_METERS_PER_UNIT;
@@ -222,11 +244,6 @@ function wrappedDelta(value: number, span: number): number {
 
 function clamp(value: number, minimum: number, maximum: number): number {
 	return Math.max(minimum, Math.min(maximum, value));
-}
-
-function moveToward(current: number, target: number, amount: number): number {
-	if (current < target) return Math.min(target, current + amount);
-	return Math.max(target, current - amount);
 }
 
 function shortestAngleDelta(from: number, to: number): number {
@@ -280,17 +297,19 @@ function shuffle<T>(values: T[], random: () => number): void {
 	}
 }
 
-function chooseTrafficKind(random: () => number): TrafficVehicleKind {
-	const totalWeight = TRAFFIC_VEHICLE_KINDS.reduce(
-		(total, kind) => total + TRAFFIC_KIND_SPAWN_WEIGHTS[kind],
-		0,
-	);
+function chooseTrafficModel(
+	random: () => number,
+	excludedIds: ReadonlySet<string>,
+): TrafficVehicleModel {
+	const available = TRAFFIC_VEHICLE_MODELS.filter((model) => !excludedIds.has(model.id));
+	const choices = available.length > 0 ? available : TRAFFIC_VEHICLE_MODELS;
+	const totalWeight = choices.reduce((total, model) => total + model.spawnWeight, 0);
 	let pick = random() * totalWeight;
-	for (const kind of TRAFFIC_VEHICLE_KINDS) {
-		pick -= TRAFFIC_KIND_SPAWN_WEIGHTS[kind];
-		if (pick <= 0) return kind;
+	for (const model of choices) {
+		pick -= model.spawnWeight;
+		if (pick <= 0) return model;
 	}
-	return 'compact';
+	return choices[choices.length - 1];
 }
 
 function distanceBetweenTiles(
@@ -309,6 +328,13 @@ function directionHeading(direction: Direction): number {
 	return Math.atan2(direction.dx, direction.dz);
 }
 
+function directionIndex(direction: Direction): number {
+	if (direction.dx === 1) return 0;
+	if (direction.dx === -1) return 1;
+	if (direction.dz === 1) return 2;
+	return 3;
+}
+
 function lateralOffset(direction: Direction, laneOffset: number): { x: number; z: number } {
 	return {
 		x: direction.dz * laneOffset,
@@ -321,7 +347,11 @@ function smoothBlend(value: number): number {
 	return clamped * clamped * (3 - 2 * clamped);
 }
 
-function updatePosition(layout: RoadLayout, vehicle: SimulatedVehicle): void {
+function updatePosition(
+	layout: RoadLayout,
+	vehicle: SimulatedVehicle,
+	synchronizeState = true,
+): void {
 	const blend = smoothBlend(vehicle.progress);
 	const centerX = tileCenter(layout, vehicle.tileX);
 	const centerZ = tileCenter(layout, vehicle.tileZ);
@@ -340,8 +370,10 @@ function updatePosition(layout: RoadLayout, vehicle: SimulatedVehicle): void {
 			avoidanceOffset.z,
 		layout.worldSpan,
 	);
-	vehicle.state.x = wrapCoordinate(vehicle.routeX + vehicle.impactOffsetX, layout.worldSpan);
-	vehicle.state.z = wrapCoordinate(vehicle.routeZ + vehicle.impactOffsetZ, layout.worldSpan);
+	if (synchronizeState) {
+		vehicle.state.x = wrapCoordinate(vehicle.routeX + vehicle.impactOffsetX, layout.worldSpan);
+		vehicle.state.z = wrapCoordinate(vehicle.routeZ + vehicle.impactOffsetZ, layout.worldSpan);
+	}
 }
 
 function aimVehicle(vehicle: SimulatedVehicle, direction: Direction): void {
@@ -366,7 +398,44 @@ export function createTrafficSimulation(options: TrafficSimulationOptions): Traf
 		MAX_TRAFFIC_VEHICLES,
 		Math.max(0, Number.isFinite(requestedCount) ? Math.floor(requestedCount) : DEFAULT_TRAFFIC_VEHICLE_COUNT),
 	);
+	const widestTrafficRadius = Math.max(
+		...TRAFFIC_VEHICLE_MODELS.map((model) => trafficPhysicsFor(model).radius),
+	);
+	const laneOffset = Math.max(
+		0,
+		Math.min(
+			widestTrafficRadius + TRAFFIC_OPPOSING_LANE_CLEARANCE / 2,
+			layout.tileSize / 2 - widestTrafficRadius,
+		),
+	);
 	const roadTiles = new Set(layout.roads.map((road) => tileId(layout, road.x, road.z)));
+	const intersectionTiles = new Set(
+		[...roadTiles].filter((id) => {
+			const tileX = id % layout.gridSize;
+			const tileZ = Math.floor(id / layout.gridSize);
+			return roadNeighbors(layout, roadTiles, tileX, tileZ).length >= 3;
+		}),
+	);
+	const intersectionApproaches = new Map<number, { id: number; steps: number }>();
+	for (const roadId of roadTiles) {
+		const tileX = roadId % layout.gridSize;
+		const tileZ = Math.floor(roadId / layout.gridSize);
+		for (let index = 0; index < DIRECTIONS.length; index += 1) {
+			const direction = DIRECTIONS[index];
+			for (let steps = 1; steps <= layout.gridSize; steps += 1) {
+				const nextX = wrapIndex(tileX + direction.dx * steps, layout.gridSize);
+				const nextZ = wrapIndex(tileZ + direction.dz * steps, layout.gridSize);
+				const nextId = tileId(layout, nextX, nextZ);
+				if (!roadTiles.has(nextId)) break;
+				if (!intersectionTiles.has(nextId)) continue;
+				intersectionApproaches.set(roadId * DIRECTIONS.length + index, {
+					id: nextId,
+					steps,
+				});
+				break;
+			}
+		}
+	}
 	const candidates = [...roadTiles].map((id) => ({
 		tileX: id % layout.gridSize,
 		tileZ: Math.floor(id / layout.gridSize),
@@ -386,16 +455,29 @@ export function createTrafficSimulation(options: TrafficSimulationOptions): Traf
 	const spawnCandidates = [...nearby, ...farCandidates];
 	const kindOrder = [...TRAFFIC_VEHICLE_KINDS];
 	shuffle(kindOrder, random);
+	const modelOrder: string[] = [];
+	const reservedModelIds = new Set<string>();
+	for (const kind of kindOrder) {
+		const choices = [...trafficModelsForKind(kind)];
+		shuffle(choices, random);
+		const model = choices.find((candidateModel) => !reservedModelIds.has(candidateModel.id));
+		if (!model) continue;
+		modelOrder.push(model.id);
+		reservedModelIds.add(model.id);
+	}
+	const remainingModelIds = TRAFFIC_MODEL_IDS.filter((id) => !reservedModelIds.has(id));
+	shuffle(remainingModelIds, random);
+	modelOrder.push(...remainingModelIds);
+	const recentModelIds: string[] = [];
 	const simulated: SimulatedVehicle[] = [];
 	const intersectionReservations = new Map<number, number>();
 
 	for (const candidate of spawnCandidates) {
 		if (simulated.length >= vehicleCount) break;
-		const kind =
-			simulated.length < kindOrder.length
-				? kindOrder[simulated.length]
-				: chooseTrafficKind(random);
-		const model = chooseTrafficVehicleModel(kind, random);
+		const model =
+			simulated.length < modelOrder.length
+				? getTrafficVehicleModel(modelOrder[simulated.length])
+				: chooseTrafficModel(random, new Set(recentModelIds.slice(-6)));
 		const physics = trafficPhysicsFor(model);
 		if (
 			simulated.some(
@@ -422,8 +504,8 @@ export function createTrafficSimulation(options: TrafficSimulationOptions): Traf
 		);
 		if (!direction) continue;
 
-		const laneOffset =
-			(random() < 0.5 ? -1 : 1) * (kind === 'motorcycle' ? 0.8 : model.kind === 'bus' ? 1.7 : 1.45);
+		// Right-hand traffic: every vehicle stays to its right of the road
+		// centerline. Opposing headings naturally occupy the opposite lane.
 		const heading = directionHeading(direction);
 		const offset = lateralOffset(direction, laneOffset);
 		const cruiseSpeed = toWorldSpeed(
@@ -432,11 +514,12 @@ export function createTrafficSimulation(options: TrafficSimulationOptions): Traf
 		const vehicle: SimulatedVehicle = {
 			state: {
 				id: simulated.length,
-				kind,
+				kind: model.kind,
 				modelId: model.id,
 				x: 0,
 				z: 0,
 				heading,
+				laneOffset,
 				speed: cruiseSpeed * TRAFFIC_LAUNCH_SPEED_RATIO,
 				longitudinalLoad: 0,
 				steeringAngle: 0,
@@ -459,6 +542,7 @@ export function createTrafficSimulation(options: TrafficSimulationOptions): Traf
 			tileX: candidate.tileX,
 			tileZ: candidate.tileZ,
 			direction,
+			plannedDirection: undefined,
 			progress: 0.08 + random() * 0.74,
 			laneOffset,
 			offsetFromX: offset.x,
@@ -486,15 +570,154 @@ export function createTrafficSimulation(options: TrafficSimulationOptions): Traf
 			collisionCooldown: 0,
 		};
 		updatePosition(layout, vehicle);
+		if (
+			simulated.some(
+				(other) => minimumTrafficClearance(vehicle, other) < TRAFFIC_AVOIDANCE_GAP,
+			)
+		) {
+			continue;
+		}
 		simulated.push(vehicle);
+		recentModelIds.push(model.id);
 	}
 
 	const vehicles = simulated.map((vehicle) => vehicle.state);
 
+	function preparePlannedDirection(vehicle: SimulatedVehicle): void {
+		if (vehicle.plannedDirection) return;
+		const nextX = wrapIndex(vehicle.tileX + vehicle.direction.dx, layout.gridSize);
+		const nextZ = wrapIndex(vehicle.tileZ + vehicle.direction.dz, layout.gridSize);
+		vehicle.plannedDirection = chooseDirection(
+			random,
+			roadNeighbors(layout, roadTiles, nextX, nextZ),
+			vehicle.direction,
+		);
+	}
+
+	function routeHeadingFor(vehicle: SimulatedVehicle): number {
+		const currentHeading = directionHeading(vehicle.direction);
+		if (!vehicle.plannedDirection || vehicle.progress <= TRAFFIC_TURN_PLAN_PROGRESS) {
+			return currentHeading;
+		}
+		const turn = shortestAngleDelta(
+			currentHeading,
+			directionHeading(vehicle.plannedDirection),
+		);
+		const turnProgress = smoothBlend(
+			(vehicle.progress - TRAFFIC_TURN_PLAN_PROGRESS) /
+				(1 - TRAFFIC_TURN_PLAN_PROGRESS),
+		);
+		return currentHeading + turn * turnProgress;
+	}
+
+	function maximumSteeringAngle(kind: TrafficVehicleKind): number {
+		switch (kind) {
+			case 'motorcycle':
+				return 0.56;
+			case 'truck':
+				return 0.38;
+			case 'bus':
+				return 0.34;
+			case 'van':
+			case 'pickup':
+				return 0.44;
+			default:
+				return 0.5;
+		}
+	}
+
+	function trafficMotionProfile(
+		vehicle: SimulatedVehicle,
+		terrainAccelerationFactor: number,
+	): VehicleMotionProfile {
+		const maxSteeringAngle = maximumSteeringAngle(vehicle.model.kind);
+		return {
+			maxForwardSpeed: vehicle.maxSpeed,
+			maxReverseSpeed: 0,
+			acceleration: vehicle.acceleration * terrainAccelerationFactor,
+			reverseAcceleration: 0,
+			braking: vehicle.braking,
+			coastDrag: vehicle.acceleration * 0.3,
+			turningDrag: vehicle.braking * 0.12,
+			wheelbase: vehicle.model.wheelbaseMeters / WORLD_METERS_PER_UNIT,
+			maxSteeringAngle,
+			steeringResponse: 2.4 * vehicle.model.turnResponse,
+			maxLateralAcceleration:
+				(5.2 + vehicle.model.traction * 3.2) / WORLD_METERS_PER_UNIT,
+			accelerationTaper: 0.72,
+			accelerationCurve: 1.55,
+		};
+	}
+
+	function instructionFor(
+		vehicle: SimulatedVehicle,
+		targetSpeed: number,
+		profile: VehicleMotionProfile,
+	): VehicleMotionInstruction {
+		const routeHeading = routeHeadingFor(vehicle);
+		const routeDeltaX = wrappedDelta(vehicle.routeX - vehicle.state.x, layout.worldSpan);
+		const routeDeltaZ = wrappedDelta(vehicle.routeZ - vehicle.state.z, layout.worldSpan);
+		const lateralError =
+			routeDeltaX * Math.cos(routeHeading) -
+			routeDeltaZ * Math.sin(routeHeading);
+		const correctionHeading = clamp(
+			Math.atan2(
+				lateralError * TRAFFIC_PATH_CORRECTION_RESPONSE,
+				Math.max(3, vehicle.state.speed * 0.65),
+			),
+			-TRAFFIC_PATH_CORRECTION_LIMIT,
+			TRAFFIC_PATH_CORRECTION_LIMIT,
+		);
+		const desiredHeading = routeHeading + correctionHeading;
+		const headingError = shortestAngleDelta(vehicle.state.heading, desiredHeading);
+		let controlledTargetSpeed = targetSpeed;
+
+		if (vehicle.plannedDirection) {
+			const turnAngle = Math.abs(
+				shortestAngleDelta(
+					directionHeading(vehicle.direction),
+					directionHeading(vehicle.plannedDirection),
+				),
+			);
+			if (turnAngle > 0.1) {
+				const turnRadius =
+					profile.wheelbase /
+					Math.max(0.05, Math.tan(profile.maxSteeringAngle * 0.82));
+				const cornerSpeed =
+					Math.sqrt(profile.maxLateralAcceleration * turnRadius) *
+					TRAFFIC_TURN_SPEED_FACTOR;
+				controlledTargetSpeed = Math.min(controlledTargetSpeed, cornerSpeed);
+			}
+		}
+		if (Math.abs(headingError) > 0.35) {
+			controlledTargetSpeed = Math.min(
+				controlledTargetSpeed,
+				vehicle.cruiseSpeed *
+					clamp(1 - Math.abs(headingError) / Math.PI, 0.18, 0.72),
+			);
+		}
+
+		const speedTolerance = 0.08;
+		return {
+			drive: vehicle.state.speed < controlledTargetSpeed - speedTolerance ? 1 : 0,
+			brake: vehicle.state.speed > controlledTargetSpeed + speedTolerance ? 1 : 0,
+			steering: clamp(
+				headingError / Math.max(0.05, profile.maxSteeringAngle * 0.72),
+				-1,
+				1,
+			),
+		};
+	}
+
 	function avoidanceFor(
 		vehicle: SimulatedVehicle,
-		obstacles: ReadonlyArray<VehicleImpactBody & { id?: number }>,
-	): { targetSpeed: number; brake: number; offset: number } {
+		obstacles: readonly TrafficObstacle[],
+	): {
+		targetSpeed: number;
+		brake: number;
+		offset: number;
+		maximumTravelDistance: number;
+	} {
 		const forwardX = vehicle.direction.dx;
 		const forwardZ = vehicle.direction.dz;
 		const lookahead =
@@ -504,35 +727,61 @@ export function createTrafficSimulation(options: TrafficSimulationOptions): Traf
 		let targetSpeed = vehicle.cruiseSpeed;
 		let brake = 0;
 		let offset = 0;
+		let maximumTravelDistance = Number.POSITIVE_INFINITY;
 
 		for (const obstacle of obstacles) {
 			if (obstacle.id === vehicle.state.id) continue;
+			if (
+				obstacle.directionX !== undefined &&
+				obstacle.directionZ !== undefined &&
+				obstacle.directionX * forwardX + obstacle.directionZ * forwardZ < 0.5
+			) {
+				continue;
+			}
 			const deltaX = wrappedDelta(obstacle.x - vehicle.state.x, layout.worldSpan);
 			const deltaZ = wrappedDelta(obstacle.z - vehicle.state.z, layout.worldSpan);
 			const forwardDistance = deltaX * forwardX + deltaZ * forwardZ;
-			if (forwardDistance <= 0 || forwardDistance >= lookahead) continue;
+			if (forwardDistance <= 0) continue;
 			const lateralDistance = deltaX * vehicle.direction.dz + deltaZ * -vehicle.direction.dx;
-			const safeGap =
-				vehicle.radius + vehicle.collisionOffset + obstacle.radius + TRAFFIC_AVOIDANCE_GAP;
-			if (Math.abs(lateralDistance) > safeGap + TRAFFIC_AVOIDANCE_CORRIDOR) continue;
-
-			const usableDistance = Math.max(0, forwardDistance - safeGap);
-			const availableDistance = Math.max(0.01, lookahead - safeGap);
-			const speedFactor = clamp(usableDistance / availableDistance, 0, 1);
 			const obstacleSpeed = Math.max(
 				0,
 				obstacle.velocityX * forwardX + obstacle.velocityZ * forwardZ,
+			);
+			const closingSpeed = Math.max(0, vehicle.state.speed - obstacleSpeed);
+			const predictedClosingDistance =
+				closingSpeed * TRAFFIC_DRIVER_REACTION_SECONDS +
+				(closingSpeed * closingSpeed) / (2 * vehicle.braking);
+			const longitudinalSafeGap =
+				vehicle.state.collisionHalfLength +
+				(obstacle.collisionHalfLength ?? obstacle.radius) +
+				TRAFFIC_AVOIDANCE_GAP +
+				predictedClosingDistance;
+			const obstacleLookahead = Math.max(
+				lookahead,
+				longitudinalSafeGap + TRAFFIC_AVOIDANCE_LOOKAHEAD,
+			);
+			if (forwardDistance >= obstacleLookahead) continue;
+			const lateralSafeGap = vehicle.radius + obstacle.radius + TRAFFIC_AVOIDANCE_CORRIDOR;
+			if (Math.abs(lateralDistance) > lateralSafeGap) continue;
+
+			const usableDistance = Math.max(0, forwardDistance - longitudinalSafeGap);
+			const availableDistance = Math.max(0.01, obstacleLookahead - longitudinalSafeGap);
+			const speedFactor = clamp(usableDistance / availableDistance, 0, 1);
+			const safeStoppingSpeed = Math.sqrt(
+				obstacleSpeed * obstacleSpeed + 2 * vehicle.braking * usableDistance,
 			);
 			targetSpeed = Math.min(
 				targetSpeed,
 				vehicle.cruiseSpeed * speedFactor,
 				obstacleSpeed + usableDistance * 1.3,
+				safeStoppingSpeed,
 			);
+			maximumTravelDistance = Math.min(maximumTravelDistance, usableDistance);
 			const pressure = 1 - speedFactor;
 			brake = Math.max(brake, pressure);
 		}
 
-		return { targetSpeed, brake, offset };
+		return { targetSpeed, brake, offset, maximumTravelDistance };
 	}
 
 	function capsuleBodies(vehicle: SimulatedVehicle): VehicleImpactBody[] {
@@ -549,6 +798,21 @@ export function createTrafficSimulation(options: TrafficSimulationOptions): Traf
 			radius: vehicle.radius,
 			mass: vehicle.mass,
 		}));
+	}
+
+	function minimumTrafficClearance(first: SimulatedVehicle, second: SimulatedVehicle): number {
+		let minimum = Number.POSITIVE_INFINITY;
+		for (const firstBody of capsuleBodies(first)) {
+			for (const secondBody of capsuleBodies(second)) {
+				const deltaX = wrappedDelta(secondBody.x - firstBody.x, layout.worldSpan);
+				const deltaZ = wrappedDelta(secondBody.z - firstBody.z, layout.worldSpan);
+				minimum = Math.min(
+					minimum,
+					Math.hypot(deltaX, deltaZ) - firstBody.radius - secondBody.radius,
+				);
+			}
+		}
+		return minimum;
 	}
 
 	function strongestTrafficImpact(
@@ -579,22 +843,190 @@ export function createTrafficSimulation(options: TrafficSimulationOptions): Traf
 		return strongest;
 	}
 
-	function nextIntersectionId(vehicle: SimulatedVehicle): number | undefined {
-		const nextX = wrapIndex(vehicle.tileX + vehicle.direction.dx, layout.gridSize);
-		const nextZ = wrapIndex(vehicle.tileZ + vehicle.direction.dz, layout.gridSize);
-		if (roadNeighbors(layout, roadTiles, nextX, nextZ).length < 3) return undefined;
-		return tileId(layout, nextX, nextZ);
+	function nextIntersection(vehicle: SimulatedVehicle): IntersectionApproach | undefined {
+		const roadId = tileId(layout, vehicle.tileX, vehicle.tileZ);
+		const approach = intersectionApproaches.get(
+			roadId * DIRECTIONS.length + directionIndex(vehicle.direction),
+		);
+		if (!approach) return undefined;
+		return {
+			id: approach.id,
+			distanceToEntry: (approach.steps - vehicle.progress - 0.5) * layout.tileSize,
+		};
+	}
+
+	function intersectionControlDistance(vehicle: SimulatedVehicle): number {
+		const stoppingDistance =
+			(vehicle.state.speed * vehicle.state.speed) / Math.max(0.1, 2 * vehicle.braking);
+		return Math.max(
+			layout.tileSize * TRAFFIC_INTERSECTION_MIN_CONTROL_TILES,
+			stoppingDistance + vehicle.state.collisionHalfLength + TRAFFIC_INTERSECTION_STOP_GAP,
+		);
+	}
+
+	function vehicleOverlapsIntersection(
+		vehicle: SimulatedVehicle,
+		intersectionId: number,
+	): boolean {
+		const centerX = tileCenter(layout, intersectionId % layout.gridSize);
+		const centerZ = tileCenter(layout, Math.floor(intersectionId / layout.gridSize));
+		const halfSize = layout.tileSize / 2;
+		const forwardX = Math.sin(vehicle.state.heading);
+		const forwardZ = Math.cos(vehicle.state.heading);
+		const offsets =
+			vehicle.collisionOffset > 0.08
+				? [-vehicle.collisionOffset, 0, vehicle.collisionOffset]
+				: [0];
+		for (const offset of offsets) {
+			const capsuleX = wrapCoordinate(vehicle.state.x + forwardX * offset, layout.worldSpan);
+			const capsuleZ = wrapCoordinate(vehicle.state.z + forwardZ * offset, layout.worldSpan);
+			const outsideX = Math.max(
+				0,
+				Math.abs(wrappedDelta(capsuleX - centerX, layout.worldSpan)) - halfSize,
+			);
+			const outsideZ = Math.max(
+				0,
+				Math.abs(wrappedDelta(capsuleZ - centerZ, layout.worldSpan)) - halfSize,
+			);
+			if (outsideX * outsideX + outsideZ * outsideZ <= vehicle.radius * vehicle.radius) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	function vehicleCenterInsideIntersection(
+		vehicle: SimulatedVehicle,
+		intersectionId: number,
+	): boolean {
+		const centerX = tileCenter(layout, intersectionId % layout.gridSize);
+		const centerZ = tileCenter(layout, Math.floor(intersectionId / layout.gridSize));
+		const halfSize = layout.tileSize / 2;
+		return (
+			Math.abs(wrappedDelta(vehicle.state.x - centerX, layout.worldSpan)) <= halfSize &&
+			Math.abs(wrappedDelta(vehicle.state.z - centerZ, layout.worldSpan)) <= halfSize
+		);
+	}
+
+	function vehicleRouteInsideIntersection(
+		vehicle: SimulatedVehicle,
+		intersectionId: number,
+	): boolean {
+		return tileId(layout, vehicle.tileX, vehicle.tileZ) === intersectionId;
+	}
+
+	function vehicleApproachesIntersection(vehicle: SimulatedVehicle, intersectionId: number): boolean {
+		const approach = nextIntersection(vehicle);
+		return (
+			approach?.id === intersectionId &&
+			approach.distanceToEntry <= intersectionControlDistance(vehicle)
+		);
 	}
 
 	function ownsOrApproachesIntersection(vehicle: SimulatedVehicle, intersectionId: number): boolean {
-		const currentId = tileId(layout, vehicle.tileX, vehicle.tileZ);
-		if (currentId === intersectionId && vehicle.progress <= TRAFFIC_INTERSECTION_EXIT_PROGRESS) {
-			return true;
-		}
 		return (
-			nextIntersectionId(vehicle) === intersectionId &&
-			vehicle.progress >= TRAFFIC_INTERSECTION_APPROACH_PROGRESS
+			vehicleRouteInsideIntersection(vehicle, intersectionId) ||
+			vehicleOverlapsIntersection(vehicle, intersectionId) ||
+			vehicleApproachesIntersection(vehicle, intersectionId)
 		);
+	}
+
+	function approachingVehicles(intersectionId: number): SimulatedVehicle[] {
+		return simulated.filter(
+			(vehicle) =>
+				vehicleRouteInsideIntersection(vehicle, intersectionId) ||
+				vehicleOverlapsIntersection(vehicle, intersectionId) ||
+				vehicleApproachesIntersection(vehicle, intersectionId),
+		);
+	}
+
+	function hasRightOfWayConflict(
+		vehicle: SimulatedVehicle,
+		intersectionId: number,
+		candidates: readonly SimulatedVehicle[],
+	): boolean {
+		const rightApproachDx = -vehicle.direction.dz;
+		const rightApproachDz = vehicle.direction.dx;
+		return candidates.some(
+			(other) =>
+				other !== vehicle &&
+				vehicleApproachesIntersection(other, intersectionId) &&
+				other.direction.dx === rightApproachDx &&
+				other.direction.dz === rightApproachDz,
+		);
+	}
+
+	function chooseIntersectionOwner(intersectionId: number): number | undefined {
+		const candidates = approachingVehicles(intersectionId);
+		if (candidates.length === 0) return undefined;
+		const currentOwner = intersectionReservations.get(intersectionId);
+		if (currentOwner !== undefined) {
+			const owner = simulated[currentOwner];
+			if (
+				owner &&
+				(vehicleRouteInsideIntersection(owner, intersectionId) ||
+					vehicleOverlapsIntersection(owner, intersectionId))
+			) {
+				return currentOwner;
+			}
+		}
+		const routeOccupants = candidates.filter(
+			(vehicle) => vehicleRouteInsideIntersection(vehicle, intersectionId),
+		);
+		if (routeOccupants.length > 0) {
+			const retainedOwner = routeOccupants.find(
+				(vehicle) => vehicle.state.id === currentOwner,
+			);
+			const owner =
+				retainedOwner ??
+				routeOccupants.sort((first, second) => first.state.id - second.state.id)[0];
+			intersectionReservations.set(intersectionId, owner.state.id);
+			return owner.state.id;
+		}
+		const centerOccupants = candidates.filter(
+			(vehicle) => vehicleCenterInsideIntersection(vehicle, intersectionId),
+		);
+		if (centerOccupants.length > 0) {
+			const retainedOwner = centerOccupants.find(
+				(vehicle) => vehicle.state.id === currentOwner,
+			);
+			const owner =
+				retainedOwner ??
+				centerOccupants.sort((first, second) => first.state.id - second.state.id)[0];
+			intersectionReservations.set(intersectionId, owner.state.id);
+			return owner.state.id;
+		}
+		const occupants = candidates.filter(
+			(vehicle) => vehicleOverlapsIntersection(vehicle, intersectionId),
+		);
+		if (occupants.length > 0) {
+			const retainedOwner = occupants.find(
+				(vehicle) => vehicle.state.id === currentOwner,
+			);
+			const owner =
+				retainedOwner ??
+				occupants.sort((first, second) => first.state.id - second.state.id)[0];
+			intersectionReservations.set(intersectionId, owner.state.id);
+			return owner.state.id;
+		}
+		if (currentOwner !== undefined) {
+			const owner = simulated[currentOwner];
+			if (owner && ownsOrApproachesIntersection(owner, intersectionId)) return currentOwner;
+		}
+
+		const eligible = candidates.filter(
+			(vehicle) => !hasRightOfWayConflict(vehicle, intersectionId, candidates),
+		);
+		const ordered = (eligible.length > 0 ? eligible : candidates).sort(
+			(first, second) => {
+				const firstDistance = nextIntersection(first)?.distanceToEntry ?? Number.NEGATIVE_INFINITY;
+				const secondDistance = nextIntersection(second)?.distanceToEntry ?? Number.NEGATIVE_INFINITY;
+				return firstDistance - secondDistance || first.state.id - second.state.id;
+			},
+		);
+		const owner = ordered[0];
+		intersectionReservations.set(intersectionId, owner.state.id);
+		return owner.state.id;
 	}
 
 	function pruneIntersectionReservations(): void {
@@ -606,25 +1038,58 @@ export function createTrafficSimulation(options: TrafficSimulationOptions): Traf
 		}
 	}
 
-	function intersectionTargetSpeed(vehicle: SimulatedVehicle): number | undefined {
-		const intersectionId = nextIntersectionId(vehicle);
+	function intersectionTargetSpeed(
+		vehicle: SimulatedVehicle,
+		player?: VehicleImpactBody,
+	): IntersectionControl | undefined {
+		const approach = nextIntersection(vehicle);
 		if (
-			intersectionId === undefined ||
-			vehicle.progress < TRAFFIC_INTERSECTION_APPROACH_PROGRESS
+			!approach ||
+			approach.distanceToEntry > intersectionControlDistance(vehicle)
 		) {
 			return undefined;
 		}
-		const ownerId = intersectionReservations.get(intersectionId);
-		if (ownerId === undefined || ownerId === vehicle.state.id) {
-			intersectionReservations.set(intersectionId, vehicle.state.id);
+		const intersectionId = approach.id;
+		const stopDistance = Math.max(
+			0,
+			approach.distanceToEntry -
+				vehicle.state.collisionHalfLength -
+				TRAFFIC_INTERSECTION_STOP_GAP,
+		);
+		if (player) {
+			const intersectionX = tileCenter(layout, intersectionId % layout.gridSize);
+			const intersectionZ = tileCenter(layout, Math.floor(intersectionId / layout.gridSize));
+			const playerDistance = Math.hypot(
+				wrappedDelta(player.x - intersectionX, layout.worldSpan),
+				wrappedDelta(player.z - intersectionZ, layout.worldSpan),
+			);
+			if (playerDistance <= layout.tileSize * 0.62 + player.radius) {
+				return {
+					targetSpeed: Math.sqrt(2 * vehicle.braking * stopDistance),
+					maximumTravelDistance: stopDistance,
+				};
+			}
+		}
+		const ownerId = chooseIntersectionOwner(intersectionId);
+		const occupiedByOther = simulated.some(
+			(other) =>
+				other !== vehicle &&
+				vehicle.direction.dx * other.direction.dx +
+					vehicle.direction.dz * other.direction.dz ===
+					0 &&
+				vehicleOverlapsIntersection(other, intersectionId),
+		);
+		if (ownerId === vehicle.state.id) {
+			return undefined;
+		}
+		if (ownerId === undefined && !occupiedByOther) {
 			return undefined;
 		}
 
-		const stopDistance = Math.max(
-			0,
-			(TRAFFIC_INTERSECTION_STOP_PROGRESS - vehicle.progress) * layout.tileSize,
-		);
-		return Math.sqrt(2 * vehicle.braking * stopDistance);
+		return {
+			targetSpeed: Math.sqrt(2 * vehicle.braking * stopDistance),
+			maximumTravelDistance: stopDistance,
+		};
 	}
 
 	function snapshotRoute(vehicle: SimulatedVehicle): TrafficRouteSnapshot {
@@ -632,6 +1097,9 @@ export function createTrafficSimulation(options: TrafficSimulationOptions): Traf
 			tileX: vehicle.tileX,
 			tileZ: vehicle.tileZ,
 			direction: { ...vehicle.direction },
+			plannedDirection: vehicle.plannedDirection
+				? { ...vehicle.plannedDirection }
+				: undefined,
 			progress: vehicle.progress,
 			offsetFromX: vehicle.offsetFromX,
 			offsetFromZ: vehicle.offsetFromZ,
@@ -646,6 +1114,7 @@ export function createTrafficSimulation(options: TrafficSimulationOptions): Traf
 		vehicle.tileX = snapshot.tileX;
 		vehicle.tileZ = snapshot.tileZ;
 		vehicle.direction = snapshot.direction;
+		vehicle.plannedDirection = snapshot.plannedDirection;
 		vehicle.progress = snapshot.progress;
 		vehicle.offsetFromX = snapshot.offsetFromX;
 		vehicle.offsetFromZ = snapshot.offsetFromZ;
@@ -757,9 +1226,6 @@ export function createTrafficSimulation(options: TrafficSimulationOptions): Traf
 		vehicle.impactVelocityZ = recoil.z;
 		vehicle.state.velocityX = recoil.x;
 		vehicle.state.velocityZ = recoil.z;
-		if (recoil.x !== 0 || recoil.z !== 0) {
-			vehicle.state.heading = Math.atan2(recoil.x, recoil.z);
-		}
 		vehicle.state.verticalVelocity = Math.max(
 			vehicle.state.verticalVelocity,
 			airborneVelocity(inwardSpeed, TRAFFIC_AIRBORNE_LAUNCH_FACTOR),
@@ -798,6 +1264,45 @@ export function createTrafficSimulation(options: TrafficSimulationOptions): Traf
 		vehicle.state.z = wrapCoordinate(vehicle.routeZ + vehicle.impactOffsetZ, layout.worldSpan);
 	}
 
+	function applyRouteAlignedSeparation(
+		vehicle: SimulatedVehicle,
+		impact: Pick<VehicleImpactChange, 'correctionX' | 'correctionZ'>,
+	): void {
+		const forwardCorrection =
+			impact.correctionX * vehicle.direction.dx +
+			impact.correctionZ * vehicle.direction.dz;
+		const forwardOffset =
+			vehicle.impactOffsetX * vehicle.direction.dx +
+			vehicle.impactOffsetZ * vehicle.direction.dz;
+		const lateralOffset =
+			vehicle.impactOffsetX * vehicle.direction.dz -
+			vehicle.impactOffsetZ * vehicle.direction.dx;
+		const constrainedLateral = clamp(
+			lateralOffset,
+			-TRAFFIC_RESTING_LATERAL_OFFSET,
+			TRAFFIC_RESTING_LATERAL_OFFSET,
+		);
+
+		vehicle.progress += (forwardOffset + forwardCorrection) / layout.tileSize;
+		vehicle.impactOffsetX = vehicle.direction.dz * constrainedLateral;
+		vehicle.impactOffsetZ = -vehicle.direction.dx * constrainedLateral;
+		updatePosition(layout, vehicle);
+	}
+
+	function isRestingTrafficContact(
+		first: SimulatedVehicle,
+		second: SimulatedVehicle,
+	): boolean {
+		return (
+			first.state.speed < TRAFFIC_RESTING_CONTACT_SPEED &&
+			second.state.speed < TRAFFIC_RESTING_CONTACT_SPEED &&
+			first.state.verticalOffset === 0 &&
+			second.state.verticalOffset === 0 &&
+			first.state.impactIntensity < 0.08 &&
+			second.state.impactIntensity < 0.08
+		);
+	}
+
 	function applyTrafficImpact(
 		vehicle: SimulatedVehicle,
 		impact: VehicleImpactChange,
@@ -830,9 +1335,6 @@ export function createTrafficSimulation(options: TrafficSimulationOptions): Traf
 		vehicle.state.z = wrapCoordinate(vehicle.routeZ + vehicle.impactOffsetZ, layout.worldSpan);
 		vehicle.state.velocityX = forwardX * vehicle.state.speed + vehicle.impactVelocityX;
 		vehicle.state.velocityZ = forwardZ * vehicle.state.speed + vehicle.impactVelocityZ;
-		if (vehicle.state.velocityX !== 0 || vehicle.state.velocityZ !== 0) {
-			vehicle.state.heading = Math.atan2(vehicle.state.velocityX, vehicle.state.velocityZ);
-		}
 		vehicle.state.verticalVelocity = Math.max(
 			vehicle.state.verticalVelocity,
 			airborneVelocity(closingSpeed, TRAFFIC_AIRBORNE_LAUNCH_FACTOR),
@@ -865,6 +1367,9 @@ export function createTrafficSimulation(options: TrafficSimulationOptions): Traf
 						const damage = damageFromImpulse(collision.impulse);
 						applyTrafficImpact(first, collision.first, collision.closingSpeed, collision.intensity, damage);
 						applyTrafficImpact(second, collision.second, collision.closingSpeed, collision.intensity, damage);
+					} else if (isRestingTrafficContact(first, second)) {
+						applyRouteAlignedSeparation(first, collision.first);
+						applyRouteAlignedSeparation(second, collision.second);
 					} else {
 						applyTrafficSeparation(first, collision.first);
 						applyTrafficSeparation(second, collision.second);
@@ -929,13 +1434,16 @@ export function createTrafficSimulation(options: TrafficSimulationOptions): Traf
 		step(deltaSeconds, player) {
 			const delta = Number.isFinite(deltaSeconds) ? Math.max(0, Math.min(deltaSeconds, 0.25)) : 0;
 			pruneIntersectionReservations();
-			const obstacles: Array<VehicleImpactBody & { id?: number }> = simulated.map((vehicle) => ({
+			const obstacles: TrafficObstacle[] = simulated.map((vehicle) => ({
 				id: vehicle.state.id,
 				x: vehicle.state.x,
 				z: vehicle.state.z,
 				velocityX: vehicle.state.velocityX,
 				velocityZ: vehicle.state.velocityZ,
-				radius: vehicle.radius + vehicle.collisionOffset,
+				radius: vehicle.radius,
+				collisionHalfLength: vehicle.state.collisionHalfLength,
+				directionX: vehicle.direction.dx,
+				directionZ: vehicle.direction.dz,
 				mass: vehicle.mass,
 			}));
 			if (player) obstacles.push({ ...player });
@@ -943,15 +1451,20 @@ export function createTrafficSimulation(options: TrafficSimulationOptions): Traf
 				const previousX = vehicle.state.x;
 				const previousZ = vehicle.state.z;
 				const previousSpeed = vehicle.state.speed;
-				const previousHeading = vehicle.state.heading;
 				const routeSnapshot = snapshotRoute(vehicle);
 				const airborne =
 					vehicle.state.verticalOffset > 0 || vehicle.state.verticalVelocity > 0;
 				const avoidance = avoidanceFor(vehicle, obstacles);
-				const intersectionSpeed = intersectionTargetSpeed(vehicle);
-				if (intersectionSpeed !== undefined) {
-					avoidance.targetSpeed = Math.min(avoidance.targetSpeed, intersectionSpeed);
-					avoidance.brake = Math.max(avoidance.brake, 1 - intersectionSpeed / vehicle.cruiseSpeed);
+				const intersectionControl = intersectionTargetSpeed(vehicle, player);
+				if (intersectionControl) {
+					avoidance.targetSpeed = Math.min(
+						avoidance.targetSpeed,
+						intersectionControl.targetSpeed,
+					);
+					avoidance.brake = Math.max(
+						avoidance.brake,
+						1 - intersectionControl.targetSpeed / vehicle.cruiseSpeed,
+					);
 				}
 				vehicle.avoidanceTargetOffset = avoidance.offset;
 				const avoidanceResponse = 1 - Math.exp(-TRAFFIC_AVOIDANCE_RESPONSE * delta);
@@ -983,57 +1496,76 @@ export function createTrafficSimulation(options: TrafficSimulationOptions): Traf
 					airborne || vehicle.recoverySeconds > 0
 						? 0
 						: Math.min(avoidance.targetSpeed, vehicle.cruiseSpeed * terrainSpeedFactor);
-				const topSpeedRatio = clamp(vehicle.state.speed / vehicle.maxSpeed, 0, 1);
-				const accelerationTaper = 1 - 0.72 * Math.pow(topSpeedRatio, 1.55);
-				const accelerating = targetSpeed >= vehicle.state.speed;
-				const speedRate = accelerating
-					? vehicle.acceleration * accelerationTaper * terrainAccelerationFactor
-					: vehicle.braking * (surface === 'meadow' ? 0.86 : 1);
-				vehicle.state.speed = moveToward(
-					vehicle.state.speed,
-					targetSpeed,
-					speedRate * delta,
+				preparePlannedDirection(vehicle);
+				const profile = trafficMotionProfile(vehicle, terrainAccelerationFactor);
+				if (surface === 'meadow') profile.braking *= 0.86;
+				const motion = stepVehicleMotion(
+					vehicle.state,
+					instructionFor(vehicle, targetSpeed, profile),
+					profile,
+					delta,
 				);
+				let routeTravelDistance = vehicle.state.speed * delta;
+				const maximumRouteTravel = Math.min(
+					avoidance.maximumTravelDistance,
+					intersectionControl?.maximumTravelDistance ?? Number.POSITIVE_INFINITY,
+				);
+				if (routeTravelDistance > maximumRouteTravel) {
+					routeTravelDistance = maximumRouteTravel;
+					vehicle.state.speed = delta > 0 ? maximumRouteTravel / delta : 0;
+				}
 				vehicle.state.longitudinalLoad =
 					delta > 0
-						? Math.max(
+						? clamp(
+								(vehicle.state.speed - previousSpeed) /
+									(Math.max(vehicle.acceleration, vehicle.braking) * delta),
 								-1,
-								Math.min(
-									1,
-									(vehicle.state.speed - previousSpeed) / (speedRate * delta),
-								),
+								1,
 							)
 						: 0;
-				const routeReturnStiffness = airborne
-					? TRAFFIC_AIR_ROUTE_RETURN_STIFFNESS
-					: TRAFFIC_ROUTE_RETURN_STIFFNESS;
-				vehicle.impactVelocityX -= vehicle.impactOffsetX * routeReturnStiffness * delta;
-				vehicle.impactVelocityZ -= vehicle.impactOffsetZ * routeReturnStiffness * delta;
 				const impactDamping = Math.exp(
 					-(airborne ? TRAFFIC_AIR_IMPACT_DAMPING : TRAFFIC_IMPACT_DAMPING) * delta,
 				);
 				vehicle.impactVelocityX *= impactDamping;
 				vehicle.impactVelocityZ *= impactDamping;
-				vehicle.impactOffsetX += vehicle.impactVelocityX * delta;
-				vehicle.impactOffsetZ += vehicle.impactVelocityZ * delta;
-				vehicle.progress += (vehicle.state.speed * delta) / layout.tileSize;
+				vehicle.progress += routeTravelDistance / layout.tileSize;
 				while (vehicle.progress >= 1) {
 					vehicle.progress -= 1;
 					vehicle.tileX = wrapIndex(vehicle.tileX + vehicle.direction.dx, layout.gridSize);
 					vehicle.tileZ = wrapIndex(vehicle.tileZ + vehicle.direction.dz, layout.gridSize);
-					const direction = chooseDirection(
-						random,
-						roadNeighbors(layout, roadTiles, vehicle.tileX, vehicle.tileZ),
-						vehicle.direction,
-					);
+					const direction =
+						vehicle.plannedDirection ??
+						chooseDirection(
+							random,
+							roadNeighbors(layout, roadTiles, vehicle.tileX, vehicle.tileZ),
+							vehicle.direction,
+						);
 					if (direction) aimVehicle(vehicle, direction);
+					vehicle.plannedDirection = undefined;
 				}
-				updatePosition(layout, vehicle);
+				updatePosition(layout, vehicle, false);
+				const forwardX = Math.sin(vehicle.state.heading);
+				const forwardZ = Math.cos(vehicle.state.heading);
+				vehicle.state.x = wrapCoordinate(
+					previousX +
+						(forwardX * vehicle.state.speed + vehicle.impactVelocityX) * delta,
+					layout.worldSpan,
+				);
+				vehicle.state.z = wrapCoordinate(
+					previousZ +
+						(forwardZ * vehicle.state.speed + vehicle.impactVelocityZ) * delta,
+					layout.worldSpan,
+				);
+				vehicle.impactOffsetX = wrappedDelta(
+					vehicle.state.x - vehicle.routeX,
+					layout.worldSpan,
+				);
+				vehicle.impactOffsetZ = wrappedDelta(
+					vehicle.state.z - vehicle.routeZ,
+					layout.worldSpan,
+				);
 				const movementX = wrapCoordinate(vehicle.state.x - previousX, layout.worldSpan);
 				const movementZ = wrapCoordinate(vehicle.state.z - previousZ, layout.worldSpan);
-				if (movementX !== 0 || movementZ !== 0) {
-					vehicle.state.heading = Math.atan2(movementX, movementZ);
-				}
 				vehicle.state.velocityX = delta > 0 ? movementX / delta : vehicle.state.velocityX;
 				vehicle.state.velocityZ = delta > 0 ? movementZ / delta : vehicle.state.velocityZ;
 				if (staticCollisionPoint(vehicle)) {
@@ -1045,25 +1577,7 @@ export function createTrafficSimulation(options: TrafficSimulationOptions): Traf
 					);
 				}
 				vehicle.state.lateralLoad =
-					delta > 0
-						? Math.max(
-								-1,
-								Math.min(
-									1,
-									(shortestAngleDelta(previousHeading, vehicle.state.heading) / delta) *
-										(vehicle.state.speed / 72),
-								),
-							)
-						: 0;
-				const routeTurn = vehicle.turnSteering * clamp(1 - vehicle.progress / 0.52, 0, 1);
-				const steeringTarget = clamp(
-					routeTurn + vehicle.state.lateralLoad * 0.48 * vehicle.model.turnResponse,
-					-0.58,
-					0.58,
-				);
-				const steeringResponse = 1 - Math.exp(-7 * delta);
-				vehicle.state.steeringAngle +=
-					(steeringTarget - vehicle.state.steeringAngle) * steeringResponse;
+					clamp(motion.yawRate * (vehicle.state.speed / 72), -1, 1);
 				const movementRatio = clamp(vehicle.state.speed / Math.max(0.01, vehicle.cruiseSpeed), 0, 1);
 				vehicle.state.rearSlip = clamp(
 					Math.abs(vehicle.state.lateralLoad) * movementRatio * (1.2 - vehicle.model.traction) +

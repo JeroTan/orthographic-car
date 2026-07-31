@@ -9,6 +9,11 @@ import {
 	stepVehicleCrashState,
 	type VehicleCrashState,
 } from './vehicle-crash';
+import {
+	stepVehicleMotion,
+	type VehicleMotionInstruction,
+	type VehicleMotionProfile,
+} from './vehicle-motion';
 
 export type { VehicleImpactEffect } from './vehicle-impact';
 
@@ -90,7 +95,6 @@ const BRAKING_MPS2 = 13.68;
 const REVERSE_ACCELERATION_MPS2 = 6.83;
 const MEADOW_REVERSE_ACCELERATION_MPS2 = 4.39;
 const COAST_DRAG_MPS2 = 8.43;
-const MEADOW_OVERSPEED_DRAG_MPS2 = 28.13;
 const GRASS_ROLLING_DRAG_MPS2 = 3.86;
 const TURNING_DRAG_MPS2 = 14.06;
 const HANDBRAKE_DRAG_MPS2 = 21.08;
@@ -112,22 +116,20 @@ const MEADOW_REVERSE_ACCELERATION = worldAccelerationFromMps2(MEADOW_REVERSE_ACC
 const COAST_DRAG = worldAccelerationFromMps2(COAST_DRAG_MPS2);
 const MAX_SPEED = worldSpeedFromKmh(329);
 const MAX_MEADOW_SPEED = worldSpeedFromKmh(177);
-const MEADOW_OVERSPEED_DRAG = worldAccelerationFromMps2(MEADOW_OVERSPEED_DRAG_MPS2);
 const GRASS_ROLLING_DRAG = worldAccelerationFromMps2(GRASS_ROLLING_DRAG_MPS2);
 const GRASS_SPEED_DRAG = 0.12;
 const MAX_REVERSE_SPEED = worldSpeedFromKmh(152);
 const MAX_MEADOW_REVERSE_SPEED = worldSpeedFromKmh(89);
-const STEERING_RATE = 1.8;
 const MAX_STEERING_ANGLE = 0.5;
 const STEERING_RESPONSE = 4.5;
 const TURNING_DRAG = worldAccelerationFromMps2(TURNING_DRAG_MPS2);
 const HANDBRAKE_DRAG = worldAccelerationFromMps2(HANDBRAKE_DRAG_MPS2);
 const IMPACT_GRAVITY = worldAccelerationFromMps2(IMPACT_GRAVITY_MPS2);
-const HANDBRAKE_YAW_BOOST = 1.65;
+const BRAKING_YAW_BOOST = 3.2;
+const HANDBRAKE_YAW_BOOST = 5;
 const ROAD_GRIP = 10;
 const BRAKING_REAR_GRIP = 4.5;
 const HANDBRAKE_REAR_GRIP = 1.2;
-const HANDBRAKE_THROTTLE_FACTOR = 0.25;
 const CAR_COLLISION_RADIUS =
 	(PORSCHE_DIMENSIONS_METERS.width / WORLD_METERS_PER_UNIT) / 2 + 0.2;
 const CAR_COLLISION_OFFSET = Math.max(
@@ -138,6 +140,8 @@ const COLLISION_SAMPLE_DISTANCE = CAR_COLLISION_RADIUS;
 const MAX_COLLISION_SAMPLES = 6;
 const SPEED_ACCELERATION_TAPER = 0.8;
 const SPEED_ACCELERATION_CURVE = 1.6;
+const PORSCHE_WHEELBASE = 2.35 * WORLD_UNITS_PER_METER;
+const MAX_LATERAL_ACCELERATION = worldAccelerationFromMps2(8.8);
 const LAUNCH_SLIP_SPEED = worldSpeedFromKmh(75.9);
 const HARD_BRAKING_SPEED = worldSpeedFromKmh(101.2);
 const LATERAL_LOAD_SPEED = worldSpeedFromKmh(404.8);
@@ -201,80 +205,50 @@ function coastTowardStop(speed: number, amount: number): number {
 	return 0;
 }
 
-function speedAccelerationFactor(speed: number, maxForwardSpeed: number): number {
-	const speedRatio = Math.max(0, Math.min(1, speed / maxForwardSpeed));
-	return 1 - SPEED_ACCELERATION_TAPER * Math.pow(speedRatio, SPEED_ACCELERATION_CURVE);
-}
-
-function updateLongitudinalSpeed(
-	speed: number,
-	deltaSeconds: number,
-	input: VehicleInput,
-	handling: SurfaceHandling,
-): number {
-	let nextSpeed = speed;
-	const driveAcceleration =
-		handling.acceleration *
-		speedAccelerationFactor(speed, handling.maxForwardSpeed) *
-		(input.handbrake ? HANDBRAKE_THROTTLE_FACTOR : 1);
-
-	if (input.accelerate && !input.brake) {
-		nextSpeed =
-			speed < 0
-				? Math.min(0, speed + BRAKING * deltaSeconds)
-				: speed > handling.maxForwardSpeed
-					? Math.max(
-							handling.maxForwardSpeed,
-							speed - MEADOW_OVERSPEED_DRAG * deltaSeconds,
-						)
-					: Math.min(
-							handling.maxForwardSpeed,
-							speed + driveAcceleration * deltaSeconds,
-						);
-	} else if (input.brake && !input.accelerate) {
-		nextSpeed =
-			speed > 0
-				? Math.max(0, speed - BRAKING * deltaSeconds)
-				: Math.max(
-						-handling.maxReverseSpeed,
-						speed - handling.reverseAcceleration * deltaSeconds,
-					);
-	} else {
-		nextSpeed = coastTowardStop(speed, COAST_DRAG * deltaSeconds);
+function motionInstruction(input: VehicleInput, speed: number): VehicleMotionInstruction {
+	if (input.accelerate === input.brake) {
+		return {
+			drive: 0,
+			brake: 0,
+			steering: Number(input.left) - Number(input.right),
+			handbrake: input.handbrake,
+		};
 	}
-
-	return input.handbrake
-		? coastTowardStop(nextSpeed, HANDBRAKE_DRAG * deltaSeconds)
-		: nextSpeed;
+	if (input.accelerate) {
+		return {
+			drive: speed >= 0 ? 1 : 0,
+			brake: speed < 0 ? 1 : 0,
+			steering: Number(input.left) - Number(input.right),
+			handbrake: input.handbrake,
+		};
+	}
+	return {
+		drive: speed <= 0 ? -1 : 0,
+		brake: speed > 0 ? 1 : 0,
+		steering: Number(input.left) - Number(input.right),
+		handbrake: input.handbrake,
+	};
 }
 
-function updateSteering(
-	state: VehicleState,
-	deltaSeconds: number,
-	input: VehicleInput,
-	handling: SurfaceHandling,
-): void {
-	const steering = Number(input.left) - Number(input.right);
-	const targetSteeringAngle = steering * MAX_STEERING_ANGLE;
-	const steeringStep = STEERING_RESPONSE * deltaSeconds;
-	state.steeringAngle += Math.max(
-		-steeringStep,
-		Math.min(steeringStep, targetSteeringAngle - state.steeringAngle),
-	);
-	if (steering === 0 || state.speed === 0) return;
-
-	const speedRatio =
-		Math.abs(state.speed) /
-		(state.speed > 0 ? handling.maxForwardSpeed : handling.maxReverseSpeed);
-	const steeringGrip = 0.35 + 0.65 * speedRatio;
-	state.heading +=
-		steering *
-		Math.sign(state.speed) *
-		STEERING_RATE *
-		steeringGrip *
-		(input.handbrake ? HANDBRAKE_YAW_BOOST : 1) *
-		deltaSeconds;
-	state.speed = coastTowardStop(state.speed, TURNING_DRAG * speedRatio * deltaSeconds);
+function motionProfile(handling: SurfaceHandling): VehicleMotionProfile {
+	return {
+		maxForwardSpeed: handling.maxForwardSpeed,
+		maxReverseSpeed: handling.maxReverseSpeed,
+		acceleration: handling.acceleration,
+		reverseAcceleration: handling.reverseAcceleration,
+		braking: BRAKING,
+		coastDrag: COAST_DRAG,
+		turningDrag: TURNING_DRAG,
+		wheelbase: PORSCHE_WHEELBASE,
+		maxSteeringAngle: MAX_STEERING_ANGLE,
+		steeringResponse: STEERING_RESPONSE,
+		maxLateralAcceleration: MAX_LATERAL_ACCELERATION,
+		accelerationTaper: SPEED_ACCELERATION_TAPER,
+		accelerationCurve: SPEED_ACCELERATION_CURVE,
+		brakingYawBoost: BRAKING_YAW_BOOST,
+		handbrakeDrag: HANDBRAKE_DRAG,
+		handbrakeYawBoost: HANDBRAKE_YAW_BOOST,
+	};
 }
 
 function updatePhysicsFeedback(
@@ -479,8 +453,12 @@ export function createVehicleController(config: VehicleConfig): VehicleControlle
 			const controlInput = airborne ? AIRBORNE_INPUT : input;
 			const surface = config.terrain?.surfaceAt(state.x, state.z) ?? 'road';
 			const handling = SURFACE_HANDLING[surface];
-			state.speed = updateLongitudinalSpeed(state.speed, deltaSeconds, controlInput, handling);
-			updateSteering(state, deltaSeconds, controlInput, handling);
+			stepVehicleMotion(
+				state,
+				motionInstruction(controlInput, state.speed),
+				motionProfile(handling),
+				deltaSeconds,
+			);
 			const grassDensity = Math.max(
 				0,
 				Math.min(1, config.terrain?.grassDensityAt?.(state.x, state.z) ?? 0),

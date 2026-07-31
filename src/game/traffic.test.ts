@@ -14,6 +14,10 @@ function wrappedDelta(value: number, span: number): number {
 	return ((((value + halfSpan) % span) + span) % span) - halfSpan;
 }
 
+function angleDelta(first: number, second: number): number {
+	return Math.atan2(Math.sin(second - first), Math.cos(second - first));
+}
+
 function closestTrafficDistance(
 	vehicles: readonly { x: number; z: number }[],
 	worldSpan: number,
@@ -31,6 +35,84 @@ function closestTrafficDistance(
 		}
 	}
 	return closest;
+}
+
+function trafficBodyOverlapsTile(
+	vehicle: {
+		x: number;
+		z: number;
+		heading: number;
+		collisionRadius: number;
+		collisionHalfLength: number;
+	},
+	centerX: number,
+	centerZ: number,
+	tileSize: number,
+	worldSpan: number,
+): boolean {
+	const collisionOffset = Math.max(0, vehicle.collisionHalfLength - vehicle.collisionRadius);
+	const offsets = collisionOffset > 0.08 ? [-collisionOffset, 0, collisionOffset] : [0];
+	const halfSize = tileSize / 2;
+	for (const offset of offsets) {
+		const capsuleX = vehicle.x + Math.sin(vehicle.heading) * offset;
+		const capsuleZ = vehicle.z + Math.cos(vehicle.heading) * offset;
+		const outsideX = Math.max(
+			0,
+			Math.abs(wrappedDelta(capsuleX - centerX, worldSpan)) - halfSize,
+		);
+		const outsideZ = Math.max(
+			0,
+			Math.abs(wrappedDelta(capsuleZ - centerZ, worldSpan)) - halfSize,
+		);
+		if (
+			outsideX * outsideX + outsideZ * outsideZ <=
+			vehicle.collisionRadius * vehicle.collisionRadius
+		) {
+			return true;
+		}
+	}
+	return false;
+}
+
+function trafficBodiesOverlap(
+	first: {
+		x: number;
+		z: number;
+		heading: number;
+		collisionRadius: number;
+		collisionHalfLength: number;
+	},
+	second: {
+		x: number;
+		z: number;
+		heading: number;
+		collisionRadius: number;
+		collisionHalfLength: number;
+	},
+	worldSpan: number,
+): boolean {
+	const firstCollisionOffset = Math.max(0, first.collisionHalfLength - first.collisionRadius);
+	const secondCollisionOffset = Math.max(0, second.collisionHalfLength - second.collisionRadius);
+	const firstOffsets =
+		firstCollisionOffset > 0.08 ? [-firstCollisionOffset, 0, firstCollisionOffset] : [0];
+	const secondOffsets =
+		secondCollisionOffset > 0.08 ? [-secondCollisionOffset, 0, secondCollisionOffset] : [0];
+	for (const firstOffset of firstOffsets) {
+		const firstX = first.x + Math.sin(first.heading) * firstOffset;
+		const firstZ = first.z + Math.cos(first.heading) * firstOffset;
+		for (const secondOffset of secondOffsets) {
+			const secondX = second.x + Math.sin(second.heading) * secondOffset;
+			const secondZ = second.z + Math.cos(second.heading) * secondOffset;
+			const distance = Math.hypot(
+				wrappedDelta(secondX - firstX, worldSpan),
+				wrappedDelta(secondZ - firstZ, worldSpan),
+			);
+			if (distance < first.collisionRadius + second.collisionRadius - 0.05) {
+				return true;
+			}
+		}
+	}
+	return false;
 }
 
 describe('ambient traffic simulation', () => {
@@ -86,6 +168,33 @@ describe('ambient traffic simulation', () => {
 		expect(Math.abs(vehicle.avoidanceOffset)).toBeLessThan(0.01);
 	});
 
+	it('decelerates behind full vehicle bodies before rear-end contact', () => {
+		const layout: RoadLayout = {
+			gridSize: 64,
+			tileSize: 6,
+			worldSpan: 384,
+			roads: Array.from({ length: 64 }, (_, x) => ({ x, z: 32 })),
+		};
+		const traffic = createTrafficSimulation({ layout, seed: 77, maxVehicles: 2 });
+		let maximumImpact = 0;
+		let maximumBrake = 0;
+
+		for (let frame = 0; frame < 60; frame += 1) {
+			traffic.step(0.05);
+			const frameImpact = Math.max(
+				...traffic.vehicles.map((vehicle) => vehicle.impactIntensity),
+			);
+			maximumImpact = Math.max(maximumImpact, frameImpact);
+			maximumBrake = Math.max(
+				maximumBrake,
+				...traffic.vehicles.map((vehicle) => vehicle.avoidanceBrake),
+			);
+		}
+
+		expect(maximumBrake).toBeGreaterThan(0.5);
+		expect(maximumImpact).toBeLessThan(0.05);
+	}, 15_000);
+
 	it('keeps traffic out of solid map scenery', () => {
 		const obstacle = { x: 0, z: 0, radius: 1 };
 		const collision = {
@@ -123,7 +232,12 @@ describe('ambient traffic simulation', () => {
 	});
 
 	it('waits behind a persistent blocker without reversing its route', () => {
-		const world = generateWorld(6767);
+		const world: RoadLayout = {
+			gridSize: 16,
+			tileSize: 6,
+			worldSpan: 96,
+			roads: Array.from({ length: 16 }, (_, x) => ({ x, z: 8 })),
+		};
 		const traffic = createTrafficSimulation({ layout: world, seed: 6767, maxVehicles: 1 });
 		const vehicle = traffic.vehicles[0];
 		const forwardX = Math.sin(vehicle.heading);
@@ -138,7 +252,9 @@ describe('ambient traffic simulation', () => {
 			mass: 2,
 		};
 
-		for (let frame = 0; frame < 120; frame += 1) traffic.step(0.05, blocker);
+		for (let frame = 0; frame < 120; frame += 1) {
+			traffic.step(0.05, blocker);
+		}
 
 		expect(vehicle.speed).toBeLessThan(0.35);
 		expect(Math.cos(vehicle.heading - startingHeading)).toBeGreaterThan(0.9);
@@ -281,6 +397,35 @@ describe('ambient traffic simulation', () => {
 		}
 	});
 
+	it('exposes front-wheel steering while taking a road turn', () => {
+		const cornerLayout: RoadLayout = {
+			gridSize: 8,
+			tileSize: 4,
+			worldSpan: 32,
+			roads: [
+				{ x: 2, z: 2 }, { x: 3, z: 2 }, { x: 4, z: 2 },
+				{ x: 4, z: 3 }, { x: 4, z: 4 }, { x: 3, z: 4 }, { x: 2, z: 4 },
+			],
+		};
+		const traffic = createTrafficSimulation({ layout: cornerLayout, seed: 6767, maxVehicles: 1 });
+		let maximumSteering = 0;
+		let largestHeadingStep = 0;
+		let previousHeading = traffic.vehicles[0].heading;
+
+		for (let step = 0; step < 240; step += 1) {
+			traffic.step(0.05);
+			maximumSteering = Math.max(maximumSteering, Math.abs(traffic.vehicles[0].steeringAngle));
+			largestHeadingStep = Math.max(
+				largestHeadingStep,
+				Math.abs(angleDelta(previousHeading, traffic.vehicles[0].heading)),
+			);
+			previousHeading = traffic.vehicles[0].heading;
+		}
+
+		expect(maximumSteering).toBeGreaterThan(0.1);
+		expect(largestHeadingStep).toBeLessThan(0.35);
+	});
+
 	it('spawns capped varied vehicles on road surface', () => {
 		const world = generateWorld(6767);
 		const terrain = createTerrainIndex(world);
@@ -294,12 +439,375 @@ describe('ambient traffic simulation', () => {
 		expect(new Set(traffic.vehicles.map((vehicle) => vehicle.kind))).toEqual(
 		new Set(TRAFFIC_VEHICLE_KINDS),
 	);
+		expect(new Set(traffic.vehicles.map((vehicle) => vehicle.modelId)).size).toBe(
+		traffic.vehicles.length,
+	);
 		expect(traffic.vehicles.every((vehicle) => terrain.isRoadAt(vehicle.x, vehicle.z))).toBe(true);
 		expect(
 			createTrafficSimulation({ layout: world, seed: 6767, maxVehicles: MAX_TRAFFIC_VEHICLES + 10 })
 				.vehicles.length,
 		).toBe(MAX_TRAFFIC_VEHICLES);
 	});
+
+	it('keeps traffic in right-hand lanes for every heading', () => {
+		const traffic = createTrafficSimulation({ layout: generateWorld(6767), seed: 6767, maxVehicles: 20 });
+
+		expect(traffic.vehicles.every((vehicle) => vehicle.laneOffset > 0)).toBe(true);
+		expect(
+			traffic.vehicles.every(
+				(vehicle) => vehicle.laneOffset - vehicle.collisionRadius >= 0.04,
+			),
+		).toBe(true);
+	});
+
+	it('keeps vehicle fronts stable instead of flipping from contact recoil', () => {
+		const traffic = createTrafficSimulation({
+			layout: generateWorld(6767),
+			seed: 6767,
+			maxVehicles: MAX_TRAFFIC_VEHICLES,
+		});
+		const previousHeadings = traffic.vehicles.map((vehicle) => vehicle.heading);
+		let largestHeadingStep = 0;
+
+		for (let frame = 0; frame < 360; frame += 1) {
+			traffic.step(0.05);
+			for (const vehicle of traffic.vehicles) {
+				largestHeadingStep = Math.max(
+					largestHeadingStep,
+					Math.abs(angleDelta(previousHeadings[vehicle.id], vehicle.heading)),
+				);
+				previousHeadings[vehicle.id] = vehicle.heading;
+			}
+		}
+
+		// A vehicle may make a legitimate 90-degree intersection turn, but
+		// contact recoil must never reverse its visual front by 180 degrees.
+		expect(largestHeadingStep).toBeLessThan(2.4);
+	}, 15_000);
+
+	it('keeps a visible predicted-braking gap between same-lane vehicles', () => {
+		const world = generateWorld(6767);
+		const traffic = createTrafficSimulation({
+			layout: world,
+			seed: 6767,
+			maxVehicles: MAX_TRAFFIC_VEHICLES,
+		});
+		let minimumBumperGap = Number.POSITIVE_INFINITY;
+
+		for (let frame = 0; frame < 360; frame += 1) {
+			traffic.step(0.05);
+			for (let first = 0; first < traffic.vehicles.length; first += 1) {
+				for (let second = first + 1; second < traffic.vehicles.length; second += 1) {
+					const firstVehicle = traffic.vehicles[first];
+					const secondVehicle = traffic.vehicles[second];
+					if (Math.abs(angleDelta(firstVehicle.heading, secondVehicle.heading)) > 0.16) {
+						continue;
+					}
+					const deltaX = wrappedDelta(secondVehicle.x - firstVehicle.x, world.worldSpan);
+					const deltaZ = wrappedDelta(secondVehicle.z - firstVehicle.z, world.worldSpan);
+					const lateralDistance = Math.abs(
+						deltaX * Math.cos(firstVehicle.heading) -
+							deltaZ * Math.sin(firstVehicle.heading),
+					);
+					if (lateralDistance > 0.4) continue;
+					const longitudinalDistance = Math.abs(
+						deltaX * Math.sin(firstVehicle.heading) +
+							deltaZ * Math.cos(firstVehicle.heading),
+					);
+					const bumperGap =
+						longitudinalDistance -
+							firstVehicle.collisionHalfLength -
+							secondVehicle.collisionHalfLength;
+					minimumBumperGap = Math.min(minimumBumperGap, bumperGap);
+				}
+			}
+		}
+
+		expect(Number.isFinite(minimumBumperGap)).toBe(true);
+		expect(minimumBumperGap).toBeGreaterThanOrEqual(0.75);
+	}, 15_000);
+
+	it('yields approaching traffic when player occupies an intersection', () => {
+		const layout: RoadLayout = {
+			gridSize: 16,
+			tileSize: 6,
+			worldSpan: 96,
+			roads: [
+				...Array.from({ length: 16 }, (_, index) => ({ x: index, z: 8 })),
+				...Array.from({ length: 16 }, (_, index) => ({ x: 8, z: index })),
+			],
+		};
+		const traffic = createTrafficSimulation({ layout, seed: 6767, maxVehicles: 12 });
+		const player = {
+			x: (8.5 * layout.tileSize) - layout.worldSpan / 2,
+			z: (8.5 * layout.tileSize) - layout.worldSpan / 2,
+			velocityX: 0,
+			velocityZ: 0,
+			radius: 1.2,
+			mass: 1.55,
+		};
+		let strongestYield = 0;
+
+		for (let frame = 0; frame < 240; frame += 1) {
+			traffic.step(0.05, player);
+			strongestYield = Math.max(
+				strongestYield,
+				...traffic.vehicles.map((vehicle) => vehicle.avoidanceBrake),
+			);
+		}
+
+		expect(strongestYield).toBeGreaterThan(0.5);
+	});
+
+	it('clears an intersection instead of leaving multiple vehicles stopped inside it', () => {
+		const layout: RoadLayout = {
+			gridSize: 32,
+			tileSize: 6,
+			worldSpan: 192,
+			roads: [
+				...Array.from({ length: 32 }, (_, index) => ({ x: index, z: 16 })),
+				...Array.from({ length: 32 }, (_, index) => ({ x: 16, z: index })),
+			],
+		};
+		const traffic = createTrafficSimulation({ layout, seed: 6767, maxVehicles: 20 });
+		const intersectionX = (16.5 * layout.tileSize) - layout.worldSpan / 2;
+		const intersectionZ = (16.5 * layout.tileSize) - layout.worldSpan / 2;
+		let consecutiveClogFrames = 0;
+		let longestClogFrames = 0;
+		let consecutiveGridlockFrames = 0;
+		let longestGridlockFrames = 0;
+
+		for (let frame = 0; frame < 1_200; frame += 1) {
+			traffic.step(0.05);
+			const stoppedInside = traffic.vehicles.filter(
+				(vehicle) =>
+					Math.abs(wrappedDelta(vehicle.x - intersectionX, layout.worldSpan)) <
+						layout.tileSize * 0.72 &&
+					Math.abs(wrappedDelta(vehicle.z - intersectionZ, layout.worldSpan)) <
+						layout.tileSize * 0.72 &&
+					vehicle.speed < 0.6,
+			);
+			consecutiveClogFrames = stoppedInside.length >= 2 ? consecutiveClogFrames + 1 : 0;
+			longestClogFrames = Math.max(longestClogFrames, consecutiveClogFrames);
+			const movingVehicles = traffic.vehicles.filter((vehicle) => vehicle.speed >= 0.1).length;
+			consecutiveGridlockFrames =
+				frame >= 200 && movingVehicles === 0 ? consecutiveGridlockFrames + 1 : 0;
+			longestGridlockFrames = Math.max(longestGridlockFrames, consecutiveGridlockFrames);
+		}
+
+		expect(longestClogFrames).toBeLessThan(40);
+		expect(longestGridlockFrames).toBeLessThan(40);
+	}, 15_000);
+
+	it('does not leave stopped traffic piled inside generated-world intersections', () => {
+		const world = generateWorld(6767);
+		const roadIds = new Set(world.roads.map(({ x, z }) => z * world.gridSize + x));
+		const intersections = world.roads.filter(({ x, z }) => {
+			const neighbors = [
+				{ x: (x + 1) % world.gridSize, z },
+				{ x: (x - 1 + world.gridSize) % world.gridSize, z },
+				{ x, z: (z + 1) % world.gridSize },
+				{ x, z: (z - 1 + world.gridSize) % world.gridSize },
+			];
+			return neighbors.filter((neighbor) => roadIds.has(neighbor.z * world.gridSize + neighbor.x))
+				.length >= 3;
+		});
+		const traffic = createTrafficSimulation({
+			layout: world,
+			seed: 6767,
+			maxVehicles: MAX_TRAFFIC_VEHICLES,
+		});
+		const clogFrames = new Map<number, number>();
+		let longestClogFrames = 0;
+
+		for (let frame = 0; frame < 150; frame += 1) {
+			traffic.step(0.05);
+			for (const intersection of intersections) {
+				const id = intersection.z * world.gridSize + intersection.x;
+				const centerX =
+					(intersection.x + 0.5) * world.tileSize - world.worldSpan / 2;
+				const centerZ =
+					(intersection.z + 0.5) * world.tileSize - world.worldSpan / 2;
+				const stoppedInside = traffic.vehicles.filter(
+					(vehicle) =>
+						trafficBodyOverlapsTile(
+							vehicle,
+							centerX,
+							centerZ,
+							world.tileSize,
+							world.worldSpan,
+						) &&
+						vehicle.speed < 0.6,
+				);
+				const streak = stoppedInside.length >= 2 ? (clogFrames.get(id) ?? 0) + 1 : 0;
+				clogFrames.set(id, streak);
+				if (streak > longestClogFrames) {
+					longestClogFrames = streak;
+				}
+			}
+		}
+
+		expect(longestClogFrames).toBeLessThan(10);
+	}, 15_000);
+
+	it('does not leave traffic bodies stacked at generated-world intersections', () => {
+		const world = generateWorld(6767);
+		const roadIds = new Set(world.roads.map(({ x, z }) => z * world.gridSize + x));
+		const intersections = world.roads
+			.filter(({ x, z }) => {
+				const neighbors = [
+					{ x: (x + 1) % world.gridSize, z },
+					{ x: (x - 1 + world.gridSize) % world.gridSize, z },
+					{ x, z: (z + 1) % world.gridSize },
+					{ x, z: (z - 1 + world.gridSize) % world.gridSize },
+				];
+				return neighbors.filter((neighbor) =>
+					roadIds.has(neighbor.z * world.gridSize + neighbor.x),
+				).length >= 3;
+			})
+			.map(({ x, z }) => ({
+				x: (x + 0.5) * world.tileSize - world.worldSpan / 2,
+				z: (z + 0.5) * world.tileSize - world.worldSpan / 2,
+			}));
+		const traffic = createTrafficSimulation({
+			layout: world,
+			seed: 6767,
+			maxVehicles: MAX_TRAFFIC_VEHICLES,
+		});
+		const overlapFrames = new Map<string, number>();
+		let longestOverlapFrames = 0;
+
+		for (let frame = 0; frame < 600; frame += 1) {
+			traffic.step(0.05);
+			const overlappingPairs = new Set<string>();
+			for (let first = 0; first < traffic.vehicles.length; first += 1) {
+				for (let second = first + 1; second < traffic.vehicles.length; second += 1) {
+					if (
+						!trafficBodiesOverlap(
+							traffic.vehicles[first],
+							traffic.vehicles[second],
+							world.worldSpan,
+						)
+					) {
+						continue;
+					}
+					const overlapsIntersection = intersections.some(
+						(intersection) =>
+							trafficBodyOverlapsTile(
+								traffic.vehicles[first],
+								intersection.x,
+								intersection.z,
+								world.tileSize,
+								world.worldSpan,
+							) ||
+							trafficBodyOverlapsTile(
+								traffic.vehicles[second],
+								intersection.x,
+								intersection.z,
+								world.tileSize,
+								world.worldSpan,
+							),
+					);
+					if (!overlapsIntersection) continue;
+					const key = `${traffic.vehicles[first].id}:${traffic.vehicles[second].id}`;
+					overlappingPairs.add(key);
+					const streak = (overlapFrames.get(key) ?? 0) + 1;
+					overlapFrames.set(key, streak);
+					longestOverlapFrames = Math.max(longestOverlapFrames, streak);
+				}
+			}
+			for (const key of overlapFrames.keys()) {
+				if (!overlappingPairs.has(key)) overlapFrames.set(key, 0);
+			}
+		}
+
+		expect(longestOverlapFrames).toBeLessThan(10);
+	}, 15_000);
+
+	it('avoids traffic-body pileups when the player blocks a generated intersection', () => {
+		const world = generateWorld(6767);
+		const roadIds = new Set(world.roads.map(({ x, z }) => z * world.gridSize + x));
+		const intersection = world.roads
+			.filter(({ x, z }) => {
+				const neighbors = [
+					{ x: (x + 1) % world.gridSize, z },
+					{ x: (x - 1 + world.gridSize) % world.gridSize, z },
+					{ x, z: (z + 1) % world.gridSize },
+					{ x, z: (z - 1 + world.gridSize) % world.gridSize },
+				];
+				return neighbors.filter((neighbor) =>
+					roadIds.has(neighbor.z * world.gridSize + neighbor.x),
+				).length >= 3;
+			})
+			.map((road) => ({
+				...road,
+				centerX: (road.x + 0.5) * world.tileSize - world.worldSpan / 2,
+				centerZ: (road.z + 0.5) * world.tileSize - world.worldSpan / 2,
+			}))
+			.sort(
+				(first, second) =>
+					Math.hypot(first.centerX, first.centerZ) -
+					Math.hypot(second.centerX, second.centerZ),
+			)[0];
+		const traffic = createTrafficSimulation({
+			layout: world,
+			seed: 6767,
+			maxVehicles: 32,
+		});
+
+		for (let frame = 0; frame < 60; frame += 1) {
+			traffic.step(0.05);
+		}
+
+		const player = {
+			x: intersection.centerX,
+			z: intersection.centerZ,
+			velocityX: 0,
+			velocityZ: 0,
+			radius: 1.2,
+			mass: 1.55,
+		};
+		const overlapFrames = new Map<string, number>();
+		let longestOverlapFrames = 0;
+
+		for (let frame = 0; frame < 240; frame += 1) {
+			traffic.step(0.05, player);
+			const vehiclesInside = traffic.vehicles.filter(
+				(vehicle) =>
+					trafficBodyOverlapsTile(
+						vehicle,
+						intersection.centerX,
+						intersection.centerZ,
+						world.tileSize,
+						world.worldSpan,
+					),
+			);
+			const overlappingPairs = new Set<string>();
+			for (let first = 0; first < vehiclesInside.length; first += 1) {
+				for (let second = first + 1; second < vehiclesInside.length; second += 1) {
+					if (
+						!trafficBodiesOverlap(
+							vehiclesInside[first],
+							vehiclesInside[second],
+							world.worldSpan,
+						)
+					) {
+						continue;
+					}
+					const key = `${vehiclesInside[first].id}:${vehiclesInside[second].id}`;
+					overlappingPairs.add(key);
+					const streak = (overlapFrames.get(key) ?? 0) + 1;
+					overlapFrames.set(key, streak);
+					longestOverlapFrames = Math.max(longestOverlapFrames, streak);
+				}
+			}
+			for (const key of overlapFrames.keys()) {
+				if (!overlappingPairs.has(key)) overlapFrames.set(key, 0);
+			}
+		}
+
+		expect(longestOverlapFrames).toBeLessThan(10);
+	}, 15_000);
 
 	it('uses model-sized collision capsules and slower meadow handling', () => {
 		const world = generateWorld(6767);
