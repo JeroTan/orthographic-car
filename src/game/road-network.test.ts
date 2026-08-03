@@ -8,7 +8,7 @@ import {
 	roadProfileFor,
 	roadWidth,
 } from './road-network';
-import type { RoadLayout } from './world';
+import { createTerrainIndex, type RoadLayout } from './world';
 
 describe('road network profiles', () => {
 	it('defines two- and four-lane hierarchy through one lane-count profile', () => {
@@ -48,6 +48,7 @@ describe('road network profiles', () => {
 		};
 		const spawn = choosePlayerRoadSpawn(layout);
 		const profile = roadProfileFor(spawn.roadClass);
+		const terrain = createTerrainIndex(layout);
 		const tileCenterX = (spawn.tileX + 0.5) * layout.tileSize - layout.worldSpan / 2;
 		const tileCenterZ = (spawn.tileZ + 0.5) * layout.tileSize - layout.worldSpan / 2;
 		const forwardX = Math.sin(spawn.heading);
@@ -62,11 +63,13 @@ describe('road network profiles', () => {
 			laneIndex: spawn.laneIndex,
 			laneOffset: spawn.laneOffset,
 			signedRightOffset,
+			surface: terrain.surfaceAt(spawn.x, spawn.z),
 		}).toEqual({
 			roadClass: 'arterial',
 			laneIndex: 1,
 			laneOffset: rightHandLaneOffset(profile, layout.tileSize, 1),
 			signedRightOffset: rightHandLaneOffset(profile, layout.tileSize, 1),
+			surface: 'road',
 		});
 	});
 });

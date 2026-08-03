@@ -209,6 +209,54 @@ describe('vehicle controller', () => {
 		expect(screenX(left)).toBeLessThan(screenX(straight));
 	});
 
+	it('keeps steering response when spawned facing east', () => {
+		const northFacing = createVehicleController({ worldSpan: 144 });
+		const eastFacing = createVehicleController({ worldSpan: 144 });
+		eastFacing.state.heading = Math.PI / 2;
+		const accelerate = { accelerate: true, brake: false, left: false, right: false };
+		const steerRight = { ...accelerate, right: true };
+
+		for (let frame = 0; frame < 20; frame += 1) {
+			northFacing.step(0.05, accelerate);
+			eastFacing.step(0.05, accelerate);
+		}
+		const northHeading = northFacing.state.heading;
+		const eastHeading = eastFacing.state.heading;
+		for (let frame = 0; frame < 10; frame += 1) {
+			northFacing.step(0.05, steerRight);
+			eastFacing.step(0.05, steerRight);
+		}
+		const normalizedTurn = (heading: number, start: number) =>
+			Math.atan2(Math.sin(heading - start), Math.cos(heading - start));
+
+		expect(normalizedTurn(eastFacing.state.heading, eastHeading)).toBeCloseTo(
+			normalizedTurn(northFacing.state.heading, northHeading),
+			8,
+		);
+	});
+
+	it('keeps road steering responsive at 100 km/h', () => {
+		const vehicle = createVehicleController({ worldSpan: 144 });
+		vehicle.state.speed = toWorldSpeed(100);
+		const startingHeading = vehicle.state.heading;
+		const steerRight = {
+			accelerate: true,
+			brake: false,
+			left: false,
+			right: true,
+		};
+
+		for (let frame = 0; frame < 10; frame += 1) vehicle.step(0.05, steerRight);
+
+		const headingChange = Math.abs(
+			Math.atan2(
+				Math.sin(vehicle.state.heading - startingHeading),
+				Math.cos(vehicle.state.heading - startingHeading),
+			),
+		);
+		expect(headingChange).toBeGreaterThan(0.4);
+	});
+
 	it('reverses when brake remains held after stopping', () => {
 		const vehicle = createVehicleController({ worldSpan: 144 });
 

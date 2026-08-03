@@ -26,6 +26,7 @@ export interface VehicleMotionProfile {
 	maxSteeringAngle: number;
 	steeringResponse: number;
 	maxLateralAcceleration: number;
+	steeringAssistLateralAcceleration?: number;
 	accelerationTaper: number;
 	accelerationCurve: number;
 	brakingYawBoost?: number;
@@ -122,8 +123,12 @@ export function stepVehicleMotion(
 	if (Math.abs(state.speed) > 1e-5 && Math.abs(state.steeringAngle) > 1e-5) {
 		const wheelbase = Math.max(0.1, profile.wheelbase);
 		const rawYawRate = (state.speed / wheelbase) * Math.tan(state.steeringAngle);
+		const lateralAccelerationLimit =
+			!instruction.handbrake && brake === 0
+				? (profile.steeringAssistLateralAcceleration ?? profile.maxLateralAcceleration)
+				: profile.maxLateralAcceleration;
 		const gripYawLimit =
-			profile.maxLateralAcceleration / Math.max(1, Math.abs(state.speed));
+			lateralAccelerationLimit / Math.max(1, Math.abs(state.speed));
 		const yawBoost = instruction.handbrake
 			? (profile.handbrakeYawBoost ?? 1)
 			: brake > 0

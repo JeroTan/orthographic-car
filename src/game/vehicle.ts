@@ -142,6 +142,8 @@ const SPEED_ACCELERATION_TAPER = 0.8;
 const SPEED_ACCELERATION_CURVE = 1.6;
 const PORSCHE_WHEELBASE = 2.35 * WORLD_UNITS_PER_METER;
 const MAX_LATERAL_ACCELERATION = worldAccelerationFromMps2(8.8);
+// Keyboard steering assist. Braking, handbrake, and traffic retain physical grip.
+const STEERING_ASSIST_LATERAL_ACCELERATION = worldAccelerationFromMps2(28);
 const LAUNCH_SLIP_SPEED = worldSpeedFromKmh(75.9);
 const HARD_BRAKING_SPEED = worldSpeedFromKmh(101.2);
 const LATERAL_LOAD_SPEED = worldSpeedFromKmh(404.8);
@@ -243,6 +245,7 @@ function motionProfile(handling: SurfaceHandling): VehicleMotionProfile {
 		maxSteeringAngle: MAX_STEERING_ANGLE,
 		steeringResponse: STEERING_RESPONSE,
 		maxLateralAcceleration: MAX_LATERAL_ACCELERATION,
+		steeringAssistLateralAcceleration: STEERING_ASSIST_LATERAL_ACCELERATION,
 		accelerationTaper: SPEED_ACCELERATION_TAPER,
 		accelerationCurve: SPEED_ACCELERATION_CURVE,
 		brakingYawBoost: BRAKING_YAW_BOOST,

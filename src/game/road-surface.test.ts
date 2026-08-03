@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import { buildRoadDecorations, buildRoadSurface } from './road-surface';
-import { createTerrainIndex, type RoadLayout, type TileCoordinate } from './world';
+import { createTerrainIndex, type RoadLayout, type RoadTile } from './world';
 
 describe('road surface', () => {
-	function roadLayout(roads: TileCoordinate[], gridSize = 2): RoadLayout {
+	function roadLayout(roads: RoadTile[], gridSize = 2): RoadLayout {
 		return {
 			gridSize,
 			tileSize: 8,
@@ -143,6 +143,37 @@ describe('road surface', () => {
 		});
 	});
 
+	it('keeps pavement outside a mixed-width arterial intersection', () => {
+		const layout = roadLayout(
+			[
+				{ x: 2, z: 2 },
+				{ x: 1, z: 2, roadClass: 'arterial' as const },
+				{ x: 3, z: 2, roadClass: 'arterial' as const },
+				{ x: 2, z: 1, roadClass: 'arterial' as const },
+				{ x: 2, z: 3, roadClass: 'arterial' as const },
+				{ x: 0, z: 2, roadClass: 'arterial' as const },
+				{ x: 4, z: 2, roadClass: 'arterial' as const },
+				{ x: 2, z: 0, roadClass: 'arterial' as const },
+				{ x: 2, z: 4, roadClass: 'arterial' as const },
+			],
+			5,
+		);
+		const decorations = buildRoadDecorations(layout);
+		const arterialHalfWidth = 7.2;
+		const pavementInsideIntersection = decorations.pavements.filter((pavement) => {
+			const halfWidth = pavement.width / 2;
+			const halfDepth = pavement.depth / 2;
+			return (
+				pavement.x + halfWidth > -arterialHalfWidth &&
+				pavement.x - halfWidth < arterialHalfWidth &&
+				pavement.z + halfDepth > -arterialHalfWidth &&
+				pavement.z - halfDepth < arterialHalfWidth
+			);
+		});
+
+		expect(pavementInsideIntersection).toEqual([]);
+	});
+
 	it('adds separated crosswalk stripes outside a four-way intersection', () => {
 		const layout = roadLayout(
 			[
@@ -192,6 +223,9 @@ describe('road surface', () => {
 		const rotatedForPedestrianLane = decorations.crosswalkStripes.every(
 			(stripe) => Math.abs((stripe.rotation ?? 0) - Math.PI / 2) < 0.001,
 		);
+		const curvedPavementsInsideIntersection = decorations.pavements.filter(
+			(pavement) => Math.abs(Math.sin((pavement.rotation ?? 0) * 2)) > 0.01,
+		).length;
 
 		expect({
 			centerDashes: decorations.centerDashes.length,
@@ -204,6 +238,7 @@ describe('road surface', () => {
 			northSouthStripesRenderAcrossLane,
 			pedestrianSizedStripes,
 			rotatedForPedestrianLane,
+			curvedPavementsInsideIntersection,
 		}).toEqual({
 			centerDashes: 0,
 			crosswalkStripes: 28,
@@ -215,6 +250,7 @@ describe('road surface', () => {
 			northSouthStripesRenderAcrossLane: true,
 			pedestrianSizedStripes: true,
 			rotatedForPedestrianLane: true,
+			curvedPavementsInsideIntersection: 0,
 		});
 	});
 

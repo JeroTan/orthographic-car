@@ -407,6 +407,27 @@ export function getRoadCornerJoins(layout: RoadLayout): RoadCornerJoin[] {
 	const joins: RoadCornerJoin[] = [];
 	const origin = -layout.worldSpan / 2;
 	const depth = layout.tileSize * 0.18;
+	const roadNeighborCount = (x: number, z: number) => {
+		const neighborKeys = new Set(
+			[
+				[x - 1, z],
+				[x + 1, z],
+				[x, z - 1],
+				[x, z + 1],
+			].map(([neighborX, neighborZ]) =>
+				roadTileKey(
+					layout,
+					wrapGridIndex(neighborX, layout.gridSize),
+					wrapGridIndex(neighborZ, layout.gridSize),
+				),
+			),
+		);
+		let count = 0;
+		for (const key of neighborKeys) {
+			if (roadTiles.has(key)) count += 1;
+		}
+		return count;
+	};
 
 	for (let gridZ = 0; gridZ < layout.gridSize; gridZ += 1) {
 		for (let gridX = 0; gridX < layout.gridSize; gridX += 1) {
@@ -435,6 +456,15 @@ export function getRoadCornerJoins(layout: RoadLayout): RoadCornerJoin[] {
 				(quadrant) => !roadTiles.has(roadTileKey(layout, quadrant.tileX, quadrant.tileZ)),
 			);
 			if (emptyQuadrants.length !== 1) continue;
+			if (
+				quadrants.some(
+					(quadrant) =>
+						roadTiles.has(roadTileKey(layout, quadrant.tileX, quadrant.tileZ)) &&
+						roadNeighborCount(quadrant.tileX, quadrant.tileZ) >= 3,
+				)
+			) {
+				continue;
+			}
 			if (
 				quadrants.some((quadrant) => {
 					const road = roads.get(roadTileKey(layout, quadrant.tileX, quadrant.tileZ));
