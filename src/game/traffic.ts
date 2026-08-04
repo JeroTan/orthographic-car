@@ -349,8 +349,9 @@ function chooseTrafficModel(
 	random: () => number,
 	excludedIds: ReadonlySet<string>,
 ): TrafficVehicleModel {
-	const available = TRAFFIC_VEHICLE_MODELS.filter((model) => !excludedIds.has(model.id));
-	const choices = available.length > 0 ? available : TRAFFIC_VEHICLE_MODELS;
+	const spawnable = TRAFFIC_VEHICLE_MODELS.filter((model) => model.spawnWeight > 0);
+	const available = spawnable.filter((model) => !excludedIds.has(model.id));
+	const choices = available.length > 0 ? available : spawnable;
 	const totalWeight = choices.reduce((total, model) => total + model.spawnWeight, 0);
 	let pick = random() * totalWeight;
 	for (const model of choices) {
@@ -506,14 +507,19 @@ export function createTrafficSimulation(options: TrafficSimulationOptions): Traf
 	for (const kind of kindOrder) {
 		const choices = [...trafficModelsForKind(kind)];
 		shuffle(choices, random);
-		const model = choices.find((candidateModel) => !reservedModelIds.has(candidateModel.id));
+		const model = choices.find(
+			(candidateModel) =>
+				candidateModel.spawnWeight > 0 && !reservedModelIds.has(candidateModel.id),
+		);
 		if (!model) continue;
 		modelOrder.push(model.id);
 		reservedModelIds.add(model.id);
 	}
 	const remainingModelIds = TRAFFIC_MODEL_IDS.filter((id) => !reservedModelIds.has(id));
 	shuffle(remainingModelIds, random);
-	modelOrder.push(...remainingModelIds);
+	modelOrder.push(
+		...remainingModelIds.filter((id) => getTrafficVehicleModel(id).spawnWeight > 0),
+	);
 	const recentModelIds: string[] = [];
 	const simulated: SimulatedVehicle[] = [];
 	const intersectionReservations = new Map<number, number>();

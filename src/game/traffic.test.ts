@@ -485,6 +485,16 @@ describe('ambient traffic simulation', () => {
 		).toBe(MAX_TRAFFIC_VEHICLES);
 	});
 
+	it('never spawns disabled city bus 3', () => {
+		const traffic = createTrafficSimulation({
+			layout: generateWorld(6767),
+			seed: 6767,
+			maxVehicles: MAX_TRAFFIC_VEHICLES,
+		});
+
+		expect(traffic.vehicles.some((vehicle) => vehicle.modelId === 'city-bus-3')).toBe(false);
+	});
+
 	it('spreads initial traffic through map regions instead of clustering near player', () => {
 		const world = generateWorld(6767);
 		const traffic = createTrafficSimulation({

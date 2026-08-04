@@ -1,3 +1,6 @@
+// @ts-expect-error Vitest runs in Node; browser tsconfig intentionally omits Node declarations.
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
 import { parseTrafficModels } from './traffic-model';
@@ -50,5 +53,20 @@ describe('packed traffic models', () => {
 			expect(model.geometry.getAttribute('uv').normalized).toBe(true);
 			expect(model.halfExtentMeters.length()).toBeGreaterThan(0);
 		}
+	});
+
+	it('does not pack multiple source vehicles into one bus model', () => {
+		const source = readFileSync(
+			new URL('../assets/traffic-models/traffic-models.bin', import.meta.url),
+		);
+		const models = parseTrafficModels(
+			source.buffer.slice(source.byteOffset, source.byteOffset + source.byteLength),
+		);
+		const busVertexCounts = ['city-bus-1', 'city-bus-2', 'city-bus-3'].map(
+			(id) => models.get(id)?.geometry.getAttribute('position').count ?? 0,
+		);
+
+		expect(Math.min(...busVertexCounts)).toBeGreaterThan(0);
+		expect(Math.max(...busVertexCounts)).toBeLessThan(30_000);
 	});
 });

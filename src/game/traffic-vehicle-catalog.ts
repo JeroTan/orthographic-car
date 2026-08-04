@@ -197,7 +197,7 @@ const trafficModels: readonly TrafficVehicleModel[] = [
 		massTons: 19.5 + index * 2.5, topSpeedKph: 100, zeroTo100Seconds: 42,
 		roadCruiseKph: [25, 42], traction: 0.7, turnResponse: 0.4,
 		bodyColor: [0x5897ad, 0xe0aa4d, 0xc15f48][index],
-		accentColor: 0xe3e3d1, spawnWeight: 1,
+		accentColor: 0xe3e3d1, spawnWeight: index === 2 ? 0 : 1,
 	})),
 ];
 
@@ -226,7 +226,7 @@ export function chooseTrafficVehicleModel(
 	kind: TrafficVehicleKind,
 	random: () => number,
 ): TrafficVehicleModel {
-	const choices = trafficModelsForKind(kind);
+	const choices = trafficModelsForKind(kind).filter((model) => model.spawnWeight > 0);
 	const totalWeight = choices.reduce((total, model) => total + model.spawnWeight, 0);
 	let pick = random() * totalWeight;
 	for (const model of choices) {

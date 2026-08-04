@@ -142,8 +142,7 @@ function sourceBoundsForMeshes(meshes) {
 	return bounds;
 }
 
-function meshGroupsByCenterX(root, centers) {
-	const meshes = allMeshes(root);
+function meshGroupsByCenterXFrom(meshes, centers) {
 	return centers.map((center) => meshes.filter((mesh) => {
 		mesh.geometry.computeBoundingBox();
 		const bounds = mesh.geometry.boundingBox?.clone().applyMatrix4(mesh.matrixWorld);
@@ -154,6 +153,10 @@ function meshGroupsByCenterX(root, centers) {
 		centers[0]);
 		return nearest === center;
 	}));
+}
+
+function meshGroupsByCenterX(root, centers) {
+	return meshGroupsByCenterXFrom(allMeshes(root), centers);
 }
 
 function meshGroupsByCenter(root, centers) {
@@ -282,6 +285,11 @@ const truckBusGroups = meshGroupsByCenter(assortedTruckBus, [
 	[145, -437],
 	[-51, -9],
 ]);
+const lowerRowGroups = meshGroupsByCenterXFrom(
+	truckBusGroups[7],
+	[-317.7, -179.5, -51.45, 60.97, 179.78],
+);
+const thirdBusGroup = lowerRowGroups[2];
 const packedModels = [
 	packModel('motorcycle', meshSubtreeNamed(motorcycle, 'Body_003')),
 	packModel('honda-civic', allMeshes(hondaCivic)),
@@ -302,7 +310,8 @@ const packedModels = [
 	packModel('civic-civilian', meshesNamed(assortedCars, ['Honda_Civic_Civillian'])),
 	...truckGroups.map((group, index) => packModel(`cargo-truck-${index + 1}`, group)),
 	...truckBusGroups.slice(0, 5).map((group, index) => packModel(`city-truck-${index + 1}`, group)),
-	...truckBusGroups.slice(5).map((group, index) => packModel(`city-bus-${index + 1}`, group)),
+	...truckBusGroups.slice(5, 7).map((group, index) => packModel(`city-bus-${index + 1}`, group)),
+	packModel('city-bus-3', thirdBusGroup),
 ];
 
 const headerSize = 12 + packedModels.length * RECORD_BYTES;
