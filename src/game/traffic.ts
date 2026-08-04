@@ -169,7 +169,7 @@ const TRAFFIC_AVOIDANCE_RESPONSE = 5;
 const TRAFFIC_INTERSECTION_STOP_GAP = 0.45;
 const TRAFFIC_INTERSECTION_MIN_CONTROL_TILES = 2;
 const TRAFFIC_AIRBORNE_CLOSING_SPEED = 5;
-const TRAFFIC_AIRBORNE_LAUNCH_FACTOR = 0.22;
+const TRAFFIC_AIRBORNE_LAUNCH_FACTOR = 0.34;
 const PLAYER_AIRBORNE_LAUNCH_FACTOR = 0.14;
 const TRAFFIC_AIR_IMPACT_DAMPING = 0.28;
 const TRAFFIC_CONTACT_SOLVER_PASSES = 3;
@@ -1372,6 +1372,12 @@ export function createTrafficSimulation(options: TrafficSimulationOptions): Traf
 		damage: number,
 	): void {
 		applyTrafficSeparation(vehicle, impact);
+		const impactSpeed = Math.hypot(impact.velocityX, impact.velocityZ);
+		const angularImpactResponse = clamp(
+			impactSpeed / Math.max(TRAFFIC_AIRBORNE_CLOSING_SPEED, closingSpeed * 0.45),
+			0,
+			1,
+		);
 		const forwardX = Math.sin(vehicle.state.heading);
 		const forwardZ = Math.cos(vehicle.state.heading);
 		const longitudinalImpact = impact.velocityX * forwardX + impact.velocityZ * forwardZ;
@@ -1398,14 +1404,14 @@ export function createTrafficSimulation(options: TrafficSimulationOptions): Traf
 		vehicle.state.velocityZ = forwardZ * vehicle.state.speed + vehicle.impactVelocityZ;
 		vehicle.state.verticalVelocity = Math.max(
 			vehicle.state.verticalVelocity,
-			airborneVelocity(closingSpeed, TRAFFIC_AIRBORNE_LAUNCH_FACTOR),
+			airborneVelocity(impactSpeed, TRAFFIC_AIRBORNE_LAUNCH_FACTOR),
 		);
 		vehicle.state.impactIntensity = Math.max(vehicle.state.impactIntensity, intensity);
 		applyVehicleCrashImpulse(vehicle.state, {
 			heading: vehicle.state.heading,
 			velocityX: impact.velocityX,
 			velocityZ: impact.velocityZ,
-			intensity,
+			intensity: intensity * angularImpactResponse,
 			verticalVelocity: vehicle.state.verticalVelocity,
 		});
 		vehicle.state.damage = Math.min(1, vehicle.state.damage + damage);

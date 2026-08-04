@@ -360,6 +360,40 @@ describe('ambient traffic simulation', () => {
 		expect(Math.abs(vehicle.crashPitch)).toBeGreaterThan(0);
 	});
 
+	it('resists flipping heavy buses under impacts that launch passenger cars', () => {
+		function hit(kind: 'compact' | 'bus') {
+			const traffic = createTrafficSimulation({
+				layout: generateWorld(6767),
+				seed: 6767,
+				maxVehicles: MAX_TRAFFIC_VEHICLES,
+			});
+			const vehicle = traffic.vehicles.find((candidate) => candidate.kind === kind);
+			if (!vehicle) throw new Error(`Expected ${kind} traffic vehicle.`);
+			const forwardX = Math.sin(vehicle.heading);
+			const forwardZ = Math.cos(vehicle.heading);
+
+			traffic.resolvePlayerImpacts({
+				x: vehicle.x - forwardX * 0.5,
+				z: vehicle.z - forwardZ * 0.5,
+				velocityX: forwardX * 24,
+				velocityZ: forwardZ * 24,
+				radius: 1.2,
+				mass: 1.55,
+			});
+
+			return vehicle;
+		}
+
+		const compact = hit('compact');
+		const bus = hit('bus');
+
+		expect(compact.verticalVelocity).toBeGreaterThan(2);
+		expect(bus.verticalVelocity).toBeLessThan(compact.verticalVelocity * 0.35);
+		expect(Math.abs(bus.crashRollVelocity)).toBeLessThan(
+			Math.abs(compact.crashRollVelocity) * 0.35,
+		);
+	});
+
 	it('keeps each traffic vehicle facing its direction of travel', () => {
 		const world = generateWorld(6767);
 		const traffic = createTrafficSimulation({ layout: world, seed: 6767, maxVehicles: 1 });
